@@ -64,4 +64,13 @@ final class SessionMatchingTests: XCTestCase {
 
         XCTAssertTrue(AppPaths.isRepository(directory))
     }
+
+    @MainActor
+    func testAllowedSessionFallbackDoesNotDoubleCountLegacyNames() {
+        let model = AppModel()
+        model.config.allowTalkers = ["wxid-a", "wxid-b"]
+        model.config.allowContacts = ["甲", "乙"]
+
+        XCTAssertEqual(model.allowedSessionCount, 2)
+    }
 }

@@ -600,7 +600,11 @@ final class AppModel: ObservableObject {
         if !sessions.isEmpty {
             return SessionCatalog.searchable(sessions).filter(isSessionAllowed).count
         }
-        return Set(config.allowTalkers).count + config.allowContacts.count
+        // TraceMemo 暂时不可用时，稳定 talker ID 是规范来源；旧名称只是迁移兼容，不能重复计数。
+        if !config.allowTalkers.isEmpty {
+            return Set(config.allowTalkers).count
+        }
+        return Set(config.allowContacts.map(normalizeSessionName)).count
     }
 
     var searchableSessionCount: Int {

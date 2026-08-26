@@ -42,6 +42,10 @@ def test_apply_updates_only_safe_fields() -> None:
             "blockKeywords": ["验证码"],
             "maxRepliesPerChatPerDay": 0,
             "maxChars": 120,
+            "personaIdentity": "独立开发者",
+            "personaPlaybook": "重要事项等本人回复",
+            "personaBoundaries": ["不承诺具体时间"],
+            "personaExamples": [{"them": "在吗", "me": "在，怎么了", "note": "简短"}],
         },
     )
 
@@ -51,6 +55,21 @@ def test_apply_updates_only_safe_fields() -> None:
     assert payload["scope"]["block_keywords"] == ["验证码"]
     assert payload["limits"]["max_replies_per_chat_per_day"] == 0
     assert payload["persona"]["max_chars"] == 120
+    assert payload["persona"]["identity"] == "独立开发者"
+    assert payload["persona"]["playbook"] == "重要事项等本人回复"
+    assert payload["persona"]["boundaries"] == ["不承诺具体时间"]
+    assert payload["persona"]["examples"] == [{"them": "在吗", "me": "在，怎么了", "note": "简短"}]
+
+
+def test_apply_rejects_inverted_delay_range() -> None:
+    payload = {"limits": {"min_delay_seconds": 1, "max_delay_seconds": 2}}
+
+    try:
+        app_config._apply(payload, {"minDelaySeconds": 10, "maxDelaySeconds": 2})
+    except ValueError as exc:
+        assert "最短等待" in str(exc)
+    else:
+        raise AssertionError("expected inverted delay range to fail")
 
 
 def test_interval_is_clamped_and_written_securely(tmp_path: Path, monkeypatch) -> None:

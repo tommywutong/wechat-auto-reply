@@ -149,14 +149,100 @@ def fetch_recent_contacts(
     return records
 
 
+_NICKNAME_KEYS = {
+    "nickname",
+    "wechatnickname",
+    "displayname",
+    "m_nsnickname",
+    "accountnickname",
+    "account_nickname",
+    "selfnickname",
+    "self_nickname",
+    "mynickname",
+    "my_nickname",
+}
+_OWNER_CONTEXT_KEYS = {
+    "self",
+    "me",
+    "my",
+    "owner",
+    "account",
+    "user",
+    "profile",
+    "current",
+    "currentuser",
+    "currentaccount",
+    "userprofile",
+}
+
+
+def _normalized_key(value: Any) -> str:
+    return "".join(ch for ch in str(value).strip().lower() if ch.isalnum() or ch == "_")
+
+
+def _status_nickname_candidates(payload: Any) -> list[str]:
+    """从 TraceMemo 状态中只读取明确带有账号/本人上下文的昵称字段。"""
+    result: list[str] = []
+
+    def visit(value: Any, owner_context: bool = False) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                normalized = _normalized_key(key)
+                child_context = owner_context or normalized in _OWNER_CONTEXT_KEYS
+                if child_context and normalized in _NICKNAME_KEYS and isinstance(child, str):
+                    candidate = clean_chat_display_name(child)
+                    if candidate and candidate not in result:
+                        result.append(candidate)
+                visit(child, child_context)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child, owner_context)
+
+    visit(payload)
+    return result
+
+
+def suggest_self_nicknames(token: str, base_url: str = BASE_URL) -> list[str]:
+    """读取 TraceMemo 明确标注为当前账号的昵称候选，不根据普通联系人猜测。"""
+    candidates: list[str] = []
+    errors: list[TraceMemoContactsError] = []
+    try:
+        candidates.extend(_status_nickname_candidates(_fetch_payload(token, base_url, "agent/status")))
+    except TraceMemoContactsError as exc:
+        errors.append(exc)
+
+    try:
+        contacts_payload = _fetch_payload(token, base_url, "contact")
+        for record in _best_records(contacts_payload):
+            is_self = any(
+                _as_bool(record.get(key))
+                for key in ("isSelf", "isMe", "isOwner", "isCurrentUser")
+            )
+            if not is_self:
+                continue
+            for key in ("remark", "m_nsNickName", "wechatNickname", "nickname", "displayName"):
+                candidate = clean_chat_display_name(str(record.get(key, "") or ""))
+                if candidate and candidate not in candidates:
+                    candidates.append(candidate)
+    except TraceMemoContactsError as exc:
+        errors.append(exc)
+
+    if not candidates and errors and len(errors) >= 2:
+        raise errors[-1]
+    return candidates
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("list",))
+    parser.add_argument("command", choices=("list", "suggest-nickname"))
     parser.add_argument("--type", choices=("all", "private", "group"), default="all")
     parser.add_argument("--url", default=BASE_URL)
     args = parser.parse_args()
     try:
         token = read_secret("TRACEMEMO_API_TOKEN", TOKEN_SERVICE)
+        if args.command == "suggest-nickname":
+            print(json.dumps({"candidates": suggest_self_nicknames(token, args.url)}, ensure_ascii=False))
+            return 0
         # recent_chat 能覆盖完整会话列表，同时保留微信侧的最近活跃顺序。
         # 某些旧版 TraceMemo 没有该端点时，退回联系人列表，搜索仍可用。
         try:

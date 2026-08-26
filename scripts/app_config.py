@@ -66,6 +66,22 @@ def _as_string_list(value: Any) -> list[str]:
     return [str(item).strip() for item in value if str(item).strip()]
 
 
+def _as_persona_examples(value: Any) -> list[dict[str, str]]:
+    """只保留可安全写回 YAML 的示例对话字段。"""
+    if not isinstance(value, list):
+        return []
+    examples: list[dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        incoming = str(item.get("them", item.get("incoming", "")) or "").strip()
+        reply = str(item.get("me", item.get("reply", "")) or "").strip()
+        note = str(item.get("note", "") or "").strip()
+        if incoming and reply:
+            examples.append({"them": incoming, "me": reply, "note": note})
+    return examples
+
+
 def _public_settings(data: dict[str, Any]) -> dict[str, Any]:
     scope = data.get("scope") or {}
     limits = data.get("limits") or {}
@@ -87,7 +103,11 @@ def _public_settings(data: dict[str, Any]) -> dict[str, Any]:
         "model": str(llm.get("model", "deepseek-chat")),
         "maxTokens": int(llm.get("max_tokens", 300)),
         "maxChars": int(persona.get("max_chars", 80)),
+        "personaIdentity": str(persona.get("identity", "")),
         "personaTone": str(persona.get("tone", "")),
+        "personaPlaybook": str(persona.get("playbook", "")),
+        "personaBoundaries": _as_string_list(persona.get("boundaries")),
+        "personaExamples": _as_persona_examples(persona.get("examples")),
         "perChatCooldownSeconds": int(limits.get("per_chat_cooldown_seconds", 0)),
         "maxRepliesPerChatPerDay": int(limits.get("max_replies_per_chat_per_day", 0)),
         "globalMaxPerHour": int(limits.get("global_max_replies_per_hour", 30)),
@@ -126,7 +146,11 @@ def _apply(data: dict[str, Any], patch: dict[str, Any]) -> None:
         "model": ("llm", "model"),
         "maxTokens": ("llm", "max_tokens"),
         "maxChars": ("persona", "max_chars"),
+        "personaIdentity": ("persona", "identity"),
         "personaTone": ("persona", "tone"),
+        "personaPlaybook": ("persona", "playbook"),
+        "personaBoundaries": ("persona", "boundaries"),
+        "personaExamples": ("persona", "examples"),
         "perChatCooldownSeconds": ("limits", "per_chat_cooldown_seconds"),
         "maxRepliesPerChatPerDay": ("limits", "max_replies_per_chat_per_day"),
         "globalMaxPerHour": ("limits", "global_max_replies_per_hour"),
@@ -146,8 +170,10 @@ def _apply(data: dict[str, Any], patch: dict[str, Any]) -> None:
             raise ValueError("replyMode 无效")
         if key == "replyToGroup" and value not in allowed_groups:
             raise ValueError("replyToGroup 无效")
-        if key in {"selfNicknames", "allowContacts", "allowTalkers", "blockContacts", "blockKeywords", "activeHours"}:
+        if key in {"selfNicknames", "allowContacts", "allowTalkers", "blockContacts", "blockKeywords", "activeHours", "personaBoundaries"}:
             value = _as_string_list(value)
+        if key == "personaExamples":
+            value = _as_persona_examples(value)
         if key in {"maxTokens", "maxChars", "globalMaxPerHour", "globalMaxPerDay"}:
             value = max(1, min(int(value), 10_000))
         if key == "maxRepliesPerChatPerDay":
@@ -157,6 +183,12 @@ def _apply(data: dict[str, Any], patch: dict[str, Any]) -> None:
         if key in {"minDelaySeconds", "maxDelaySeconds", "typingSecondsPerChar"}:
             value = max(0.0, min(float(value), 60.0))
         _set_path(data, path, value)
+
+    limits = data.get("limits") or {}
+    minimum = float(limits.get("min_delay_seconds", 0) or 0)
+    maximum = float(limits.get("max_delay_seconds", 0) or 0)
+    if minimum > maximum:
+        raise ValueError("最短等待不能大于最长等待")
 
 
 def _write(data: dict[str, Any]) -> None:

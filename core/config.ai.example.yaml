@@ -19,9 +19,7 @@ scope:
   self_nicknames: []
   allow_contacts: []
   allow_talkers: []
-  block_contacts:
-    - "老板"
-    - "妈妈"
+  block_contacts: []
 
 limits:
   per_chat_cooldown_seconds: 900     # AI 模式下可以放宽一点，回复不会重复

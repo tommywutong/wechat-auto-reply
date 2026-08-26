@@ -474,25 +474,7 @@ final class AppModel: ObservableObject {
             // The poller and the HTTP engine are separate launchd jobs. The
             // poller reads scope/limits itself, while the engine keeps the
             // persona, model, and reply policy in memory until it restarts.
-            let engineRestart = ServiceController.perform(
-                .restart,
-                repoURL: repoURL,
-                label: AppPaths.engineServiceLabel
-            )
-            guard engineRestart.status == 0 else {
-                DispatchQueue.main.async {
-                    guard let self else { return }
-                    self.isBusy = false
-                    self.operationMessage = "设置已保存，但规则服务重启失败。"
-                    self.errorMessage = engineRestart.stderr.isEmpty
-                        ? "请手动重启规则服务后再试。"
-                        : engineRestart.stderr
-                    self.refreshStatus()
-                }
-                return
-            }
-
-            let restart = ServiceController.perform(.restart, repoURL: repoURL)
+            let restart = ServiceController.performAll(.restart, repoURL: repoURL)
             let verify = restart.status == 0 ? ConfigBridge.load(repoURL: repoURL) : restart
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -578,7 +560,7 @@ final class AppModel: ObservableObject {
         isBusy = true
         errorMessage = ""
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result = ServiceController.perform(action, repoURL: repoURL)
+            let result = ServiceController.performAll(action, repoURL: repoURL)
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.isBusy = false
@@ -697,9 +679,9 @@ enum ServiceAction {
 
     var successMessage: String {
         switch self {
-        case .start: return "自动回复服务已启动。"
-        case .stop: return "自动回复服务已停止。"
-        case .restart: return "自动回复服务已重启。"
+        case .start: return "规则服务和自动回复服务已启动。"
+        case .stop: return "规则服务和自动回复服务已停止。"
+        case .restart: return "规则服务和自动回复服务已重启。"
         }
     }
 
@@ -722,6 +704,31 @@ enum ServiceController {
             return .running
         }
         return .unknown(result.stdout)
+    }
+
+    static func performAll(_ action: ServiceAction, repoURL: URL) -> CommandResult {
+        // The HTTP engine must be available before the poller starts. On stop,
+        // reverse the order so the poller cannot issue requests to a server
+        // that is already going away.
+        let labels: [String]
+        switch action {
+        case .stop:
+            labels = [AppPaths.serviceLabel, AppPaths.engineServiceLabel]
+        case .start, .restart:
+            labels = [AppPaths.engineServiceLabel, AppPaths.serviceLabel]
+        }
+        for label in labels {
+            let result = perform(action, repoURL: repoURL, label: label)
+            guard result.status != 0 else { continue }
+            let serviceName = label == AppPaths.engineServiceLabel ? "规则服务" : "自动回复服务"
+            let detail = result.stderr.isEmpty ? action.failureMessage : result.stderr
+            return CommandResult(
+                status: result.status,
+                stdout: result.stdout,
+                stderr: "\(serviceName)：\(detail)"
+            )
+        }
+        return CommandResult(status: 0, stdout: "", stderr: "")
     }
 
     static func perform(
@@ -887,9 +894,9 @@ struct OverviewView: View {
                 HStack(spacing: 10) {
                     Button { model.start() } label: { Label("启动服务", systemImage: "play.fill") }
                         .buttonStyle(.borderedProminent).tint(Color(red: 0.08, green: 0.48, blue: 0.36))
-                        .disabled(model.isBusy || model.serviceState == .running)
+                        .disabled(model.isBusy || (model.serviceState == .running && model.localServerRunning))
                     Button { model.stop() } label: { Label("停止服务", systemImage: "stop.fill") }
-                        .buttonStyle(.bordered).disabled(model.isBusy || model.serviceState == .stopped)
+                        .buttonStyle(.bordered).disabled(model.isBusy || (model.serviceState == .stopped && !model.localServerRunning))
                     Button { model.restart() } label: { Label("重启", systemImage: "arrow.clockwise") }
                         .buttonStyle(.bordered).disabled(model.isBusy)
                     Spacer()

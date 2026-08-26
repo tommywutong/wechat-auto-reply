@@ -1,0 +1,312 @@
+from __future__ import annotations
+
+import importlib.util
+import sys
+from pathlib import Path
+
+
+MODULE_PATH = Path(__file__).parents[1] / "tracememo_poller.py"
+SPEC = importlib.util.spec_from_file_location("tracememo_poller", MODULE_PATH)
+assert SPEC and SPEC.loader
+poller = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = poller
+SPEC.loader.exec_module(poller)
+
+
+def test_parse_conversations_uses_stable_talker_and_display_name() -> None:
+    payload = {
+        "data": {
+            "items": [
+                {
+                    "m_nsUsrName": "room@chatroom",
+                    "m_nsNickName": "iOS群",
+                    "remark": "",
+                    "wechatNickname": "备用群名",
+                }
+            ]
+        }
+    }
+
+    assert poller.parse_conversations(payload) == [
+        poller.Conversation(talker="room@chatroom", name="iOS群", is_group=True)
+    ]
+
+
+def test_parse_messages_skips_messages_with_unknown_direction() -> None:
+    conversation = poller.Conversation(talker="wxid-a", name="Loky", is_group=False)
+    payload = {
+        "data": [
+            {
+                "serverId": "incoming",
+                "content": "你好",
+                "isSender": 0,
+                "type": 1,
+                "createTime": 1_700_000_000,
+            },
+            {
+                "serverId": "outgoing",
+                "content": "收到",
+                "isSender": 1,
+                "type": 1,
+                "createTime": 1_700_000_001,
+            },
+            {
+                "serverId": "image",
+                "content": "图片说明也不应回复",
+                "isSender": 0,
+                "type": 3,
+                "createTime": 1_700_000_002,
+            },
+            {"serverId": "unknown", "content": "不要猜方向", "type": 1, "createTime": 1_700_000_003},
+        ]
+    }
+
+    messages = poller.parse_messages(payload, conversation)
+
+    assert [message.message_id for message in messages] == ["incoming", "outgoing"]
+    assert messages[0].outgoing is False
+    assert messages[1].outgoing is True
+
+
+def test_poll_state_keeps_only_recent_message_ids(tmp_path: Path) -> None:
+    state = poller.PollState(tmp_path / "state.json")
+    for index in range(205):
+        state.mark_seen("wxid-a", str(index))
+
+    assert state.seen_ids["wxid-a"] == [str(index) for index in range(5, 205)]
+
+
+def test_text_type_filter_rejects_non_text_messages() -> None:
+    assert poller._is_text_message({"type": 1}) is True
+    assert poller._is_text_message({"type": "text"}) is True
+    assert poller._is_text_message({"type": "普通文本"}) is True
+    assert poller._is_text_message({"type": 3}) is False
+
+
+def test_parse_messages_detects_configured_group_mention() -> None:
+    conversation = poller.Conversation(
+        talker="room@chatroom",
+        name="测试群",
+        is_group=True,
+    )
+    payload = {
+        "data": [
+            {
+                "serverId": "mention",
+                "content": "@Northern Lights 你看看这个",
+                "isSender": 0,
+                "type": "普通文本",
+                "createTime": 1_700_000_000,
+            },
+            {
+                "serverId": "lookalike",
+                "content": "@Northern Lights2 不是我",
+                "isSender": 0,
+                "type": "普通文本",
+                "createTime": 1_700_000_001,
+            },
+        ]
+    }
+
+    messages = poller.parse_messages(payload, conversation, ["Northern Lights"])
+
+    assert messages[0].mentioned_me is True
+    assert messages[1].mentioned_me is False
+
+
+def test_timestamp_accepts_tracememo_datetime_field() -> None:
+    parsed = poller._timestamp({"datetime": "2026-08-24 20:14:30"})
+    assert parsed > 1_700_000_000
+
+
+class _FakeTraceMemo:
+    def __init__(self, messages: list[poller.ChatMessage], conversations=None) -> None:
+        self.messages = messages
+        self.conversations = conversations
+
+    def recent_conversations(self) -> list[poller.Conversation]:
+        if self.conversations is not None:
+            return self.conversations
+        return [
+            poller.Conversation("biscoffee-id", "Biscoffee", False),
+            poller.Conversation("loky-id", "Loky", False),
+        ]
+
+    def chatlog(self, conversation, start_time, end_time):
+        return [message for message in self.messages if message.talker == conversation.talker]
+
+
+class _FakeEngine:
+    def draft(self, message):
+        return {"should_reply": True, "text": "收到", "reason": "test", "delay_seconds": 0}
+
+
+class _FakeSender:
+    def __init__(self) -> None:
+        self.calls = []
+        self.group_flags = []
+
+    def send(self, target_name, text, *, is_group=False):
+        self.calls.append((target_name, text))
+        self.group_flags.append(is_group)
+
+
+class _RetryingSender:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def send(self, target_name, text, *, is_group=False):
+        self.calls.append((target_name, text))
+        if len(self.calls) == 1:
+            raise RuntimeError("输入区未确认")
+
+
+def test_poller_send_mode_can_be_limited_to_biscoffee(tmp_path: Path) -> None:
+    now = 1_800_000_000
+    messages = [
+        poller.ChatMessage("m1", "biscoffee-id", "Biscoffee", "你好", now, "Biscoffee", False, False),
+        poller.ChatMessage("m2", "loky-id", "Loky", "你好", now, "Loky", False, False),
+    ]
+    sender = _FakeSender()
+    state = poller.PollState(tmp_path / "state.json")
+    state.ready_talkers.update({"biscoffee-id", "loky-id"})
+    state.last_polled_at = now - 10
+    poller_instance = poller.Poller(
+        _FakeTraceMemo(messages),
+        _FakeEngine(),
+        {"biscoffee", "loky"},
+        state,
+        poller.DraftWriter(tmp_path / "drafts.jsonl"),
+        sender=sender,
+        send_name="Biscoffee",
+    )
+    original_time = poller.time.time
+    poller.time.time = lambda: now
+    try:
+        poller_instance.tick()
+    finally:
+        poller.time.time = original_time
+
+    assert sender.calls == [("Biscoffee", "收到")]
+
+
+def test_poller_allows_stable_talker_id_when_display_name_changes(tmp_path: Path) -> None:
+    now = 1_800_000_000
+    conversation = poller.Conversation("wxid-stable", "新备注", False, ("旧昵称",))
+    messages = [
+        poller.ChatMessage("m1", "wxid-stable", "新备注", "你好", now, "新备注", False, False),
+    ]
+    sender = _FakeSender()
+    state = poller.PollState(tmp_path / "state.json")
+    state.ready_talkers.add("wxid-stable")
+    state.last_polled_at = now - 10
+    poller_instance = poller.Poller(
+        _FakeTraceMemo(messages, conversations=[conversation]),
+        _FakeEngine(),
+        set(),
+        state,
+        poller.DraftWriter(tmp_path / "drafts.jsonl"),
+        allowed_talkers={"wxid-stable"},
+        sender=sender,
+        send_name="新备注",
+    )
+    original_time = poller.time.time
+    poller.time.time = lambda: now
+    try:
+        poller_instance.tick()
+    finally:
+        poller.time.time = original_time
+
+    assert sender.calls == [("新备注", "收到")]
+
+
+def test_poller_send_all_sends_only_allowed_private_messages(tmp_path: Path) -> None:
+    now = 1_800_000_000
+    messages = [
+        poller.ChatMessage("m1", "biscoffee-id", "Biscoffee", "你好", now, "Biscoffee", False, False),
+        poller.ChatMessage("m2", "loky-id", "Loky", "你好", now, "Loky", False, False),
+    ]
+    sender = _FakeSender()
+    state = poller.PollState(tmp_path / "state.json")
+    state.ready_talkers.update({"biscoffee-id", "loky-id"})
+    state.last_polled_at = now - 10
+    poller_instance = poller.Poller(
+        _FakeTraceMemo(messages),
+        _FakeEngine(),
+        {"biscoffee", "loky"},
+        state,
+        poller.DraftWriter(tmp_path / "drafts.jsonl"),
+        sender=sender,
+        send_name="Biscoffee",
+        send_all=True,
+    )
+    original_time = poller.time.time
+    poller.time.time = lambda: now
+    try:
+        poller_instance.tick()
+    finally:
+        poller.time.time = original_time
+
+    assert sender.calls == [("Biscoffee", "收到"), ("Loky", "收到")]
+    assert sender.group_flags == [False, False]
+
+
+def test_poller_passes_group_flag_to_sender(tmp_path: Path) -> None:
+    now = 1_800_000_000
+    messages = [
+        poller.ChatMessage("m1", "room-id", "测试群", "你好", now, "群友", True, False, True),
+    ]
+    sender = _FakeSender()
+    state = poller.PollState(tmp_path / "state.json")
+    state.ready_talkers.add("room-id")
+    state.last_polled_at = now - 10
+    poller_instance = poller.Poller(
+        _FakeTraceMemo(messages, [poller.Conversation("room-id", "测试群", True)]),
+        _FakeEngine(),
+        {"测试群"},
+        state,
+        poller.DraftWriter(tmp_path / "drafts.jsonl"),
+        sender=sender,
+        send_name="测试群",
+    )
+    original_time = poller.time.time
+    poller.time.time = lambda: now
+    try:
+        poller_instance.tick()
+    finally:
+        poller.time.time = original_time
+
+    assert sender.calls == [("测试群", "收到")]
+    assert sender.group_flags == [True]
+
+
+def test_poller_retries_only_unattempted_send_failure(tmp_path: Path) -> None:
+    now = 1_800_000_000
+    messages = [
+        poller.ChatMessage("m1", "biscoffee-id", "Biscoffee", "你好", now, "Biscoffee", False, False),
+    ]
+    sender = _RetryingSender()
+    state = poller.PollState(tmp_path / "state.json")
+    state.ready_talkers.add("biscoffee-id")
+    state.last_polled_at = now - 10
+    poller_instance = poller.Poller(
+        _FakeTraceMemo(messages),
+        _FakeEngine(),
+        {"biscoffee"},
+        state,
+        poller.DraftWriter(tmp_path / "drafts.jsonl"),
+        sender=sender,
+        send_name="Biscoffee",
+    )
+    original_time = poller.time.time
+    poller.time.time = lambda: now
+    try:
+        poller_instance.tick()
+        assert state.retry_attempts("biscoffee-id", "m1") == 1
+        state.retry_state["biscoffee-id"]["m1"]["next_at"] = now - 1
+        poller_instance.tick()
+    finally:
+        poller.time.time = original_time
+
+    assert sender.calls == [("Biscoffee", "收到"), ("Biscoffee", "收到")]
+    assert state.retry_attempts("biscoffee-id", "m1") == 0

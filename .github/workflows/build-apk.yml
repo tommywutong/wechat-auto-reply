@@ -1,0 +1,139 @@
+name: 编译安卓 APK
+
+# 为什么要有这个：普通用户不该为了装个 App 去装 Android SDK。
+# 这里让 GitHub 编译，产物直接下载安装。
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "android/**"
+      - ".github/workflows/build-apk.yml"
+  workflow_dispatch:        # 允许在网页上手动点「Run workflow」
+  release:
+    types: [published]
+
+permissions:
+  contents: write           # 发布 Release 时需要上传产物
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 装 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: 装 Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: 缓存 Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: 跑引擎单测
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest --no-daemon --stacktrace
+
+      - name: 编译 debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      # Release 的标签 latest 只建过一次，之后每次构建只是把里面的文件换掉。
+      # GitHub 的发布页显示的是**标签创建时间**，不是文件上传时间，
+      # 所以那个日期会永远停在第一次发布那天——看着就像很久没更新了。
+      # 把构建时间写进标题里，一眼能分辨新旧。
+      - name: 记下构建时间
+        id: buildtime
+        run: echo "stamp=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M')" >> "$GITHUB_OUTPUT"
+
+      - name: 重命名产物
+        run: |
+          mkdir -p dist
+          cp android/app/build/outputs/apk/debug/app-debug.apk \
+             dist/微信自动回复.apk
+          # Release 资源用纯英文名：中文文件名在下载链接里会变成一长串
+          # 转义字符，没法直接发给人点
+          cp android/app/build/outputs/apk/debug/app-debug.apk \
+             dist/wechat-auto-reply.apk
+          ls -lh dist/
+
+      # 每次构建都能在 Actions 页面下载到
+      - name: 单测失败时上传报告
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 单测报告
+          path: android/app/build/reports/tests/
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: 微信自动回复-apk
+          path: dist/微信自动回复.apk
+          retention-days: 90
+
+      # 推到 main 就更新「最新版」这个 Release。
+      #
+      # 为什么值得单独做：Actions 的 Artifacts 必须登录 GitHub 才能下载、
+      # 是个 zip、而且 90 天后过期。要装 App 的人多半不用 GitHub，
+      # 让他去点「绿色的勾」再解压是不现实的。
+      # Release 给的是一个固定的、不用登录、手机浏览器点开就开始下载的地址：
+      #
+      #   https://github.com/<owner>/<repo>/releases/latest/download/wechat-auto-reply.apk
+      #
+      # 把这个链接直接发给他就行。
+      - name: 更新「最新版」下载链接
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: 安卓版 APK · ${{ steps.buildtime.outputs.stamp }} 更新
+          make_latest: true
+          body: |
+            ## 手机上怎么装
+
+            用**手机浏览器**打开下面这个链接，会直接开始下载：
+
+            https://github.com/${{ github.repository }}/releases/latest/download/wechat-auto-reply.apk
+
+            下载完点开安装。中途提示「禁止安装未知应用」，
+            按提示允许一下就行。
+
+            装完打开 App，它会先问你十道选择题，点一点就完事。
+
+            ---
+
+            **⚠️ 这里只有安卓的 APK，没有 Mac 的东西。**
+            Mac 版要从仓库首页绿色的 **Code → Download ZIP** 拿，
+            或者用文件夹里的「0 更新程序.command」。
+
+            ---
+
+            **本次构建时间：${{ steps.buildtime.outputs.stamp }}（北京时间）**
+
+            页面上方那个「latest」标签的日期是第一次发布时留下的，
+            不会跟着更新——以这一行为准。
+
+            这是 debug 签名的版本，只能这样直接安装，不在应用商店里。
+            对应代码：${{ github.sha }}
+          files: |
+            dist/wechat-auto-reply.apk
+
+      # 手动打 tag 发版时也附加一份
+      - name: 附加到 Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/wechat-auto-reply.apk

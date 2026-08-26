@@ -1,0 +1,89 @@
+# 微信自动回复 —— 规则配置
+# 改完直接重启服务即可生效。
+
+enabled: true
+
+# 每条自动回复末尾追加的标记。强烈建议保留：
+# 让对方知道这是自动回复，是最省事的防误会手段。
+signature: ""
+
+# 只在这些时间段自动回复；留空表示全天。支持跨零点，如 "22:00-02:00"。
+active_hours:
+  - "09:00-12:00"
+  - "13:30-22:00"
+
+scope:
+  reply_to_private: true
+  # never / only_at_me / always —— 群聊默认只在被 @ 时回，避免刷屏
+  reply_to_group: only_at_me
+  # TraceMemo/macOS 群聊 @ 识别使用当前微信昵称。
+  self_nicknames: []
+
+  # 留空 = 对所有人生效；填了就只对这些人生效
+  allow_contacts: []
+  # TraceMemo 稳定会话 ID；控制 App 会自动维护，手工配置通常留空。
+  allow_talkers: []
+
+  # 永远不自动回复的会话
+  block_contacts:
+    - "老板"
+    - "妈妈"
+
+  # 命中即跳过（除内置硬性敏感词外的自定义补充）
+  block_keywords:
+    - "面试"
+    - "合同"
+
+limits:
+  per_chat_cooldown_seconds: 1800     # 同一会话两次自动回复的最小间隔
+  max_replies_per_chat_per_day: 5     # 同一会话每天最多回几条
+  global_max_replies_per_hour: 30     # 全局每小时上限，防止规则写错刷屏
+  min_delay_seconds: 3                # 拟人化延迟下限
+  max_delay_seconds: 12               # 拟人化延迟上限
+  global_max_replies_per_day: 100    # 每日总量上限（跑满每小时上限一天就是 720 条）
+  global_min_interval_seconds: 45    # 两条回复之间至少隔这么久（跨会话）
+  typing_seconds_per_char: 0.12      # 按回复长度追加的「打字时间」
+
+  # 同一个微信号在多端同时登录时（两端填了相同的 account），同一条
+  # 消息会被各上报一次。这个窗口内相同内容只回一次，避免重复回复。
+  # 跑两个不同的微信号、或只跑单端时，这项没有影响。
+  cross_device_dedup_seconds: 120
+
+# 规则按顺序匹配，命中第一条即停止。
+# reply 写成列表时会在同一会话内轮换，避免反复发同一句话。
+rules:
+  - name: 打招呼
+    match:
+      type: keyword
+      any: ["在吗", "在么", "在不在", "忙吗"]
+    reply:
+      - "在的，我这会儿在忙，稍后回你"
+      - "在，手上有点事，等下详细说"
+
+  - name: 问进度
+    match:
+      type: regex
+      pattern: "进度|做完了吗|好了没|什么时候"
+    reply: "还在推进，今天之内给你结果"
+
+  - name: 打招呼寒暄
+    match:
+      type: keyword
+      any: ["早上好", "晚安", "周末愉快", "新年快乐"]
+    reply: "收到，同乐~"
+
+# 所有规则都没命中时怎么办：
+#   text —— 发固定文案
+#   llm  —— 调 Claude 现场生成
+#   none —— 不回
+fallback:
+  type: text
+  text: "我现在不方便，看到会尽快回你"
+
+# fallback.type = llm 时才生效
+llm:
+  model: claude-opus-5
+  max_tokens: 300
+  effort: low
+  persona: "一个做设计外包的自由职业者，说话简短随和"
+  style: "口语化中文，不超过 30 个字，不用感叹号，不要客套话"

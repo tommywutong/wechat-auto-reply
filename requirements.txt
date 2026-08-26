@@ -1,0 +1,16 @@
+# 核心引擎
+PyYAML>=6.0
+
+# HTTP 服务（server/app.py）
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.6
+requests>=2.31
+
+# AI 生成 —— 只有 llm.provider 是 anthropic 时才需要装这个。
+# 默认的豆包，以及 DeepSeek / 千问 / 智谱 / Moonshot 都走 OpenAI 兼容接口，
+# core/llm_openai.py 只用标准库实现，不需要任何额外依赖。
+anthropic>=0.40
+
+# 测试
+pytest>=8.0

@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      只申请联网这一个权限，而且只有「AI 生成」模式才会真的用到：
+      默认的关键词模式全程跑在本机，一个字节都不往外发。
+      读通知 / 无障碍这两个能力由系统单独授权，不走 uses-permission。
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <application
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:allowBackup="false"
+        android:theme="@style/Theme.AppCompat.DayNight">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- 开场问答：装完第一次打开会自动进这里 -->
+        <activity
+            android:name=".SetupWizardActivity"
+            android:exported="false"
+            android:label="@string/app_name" />
+
+        <!-- 主力：读通知 + RemoteInput 直接回复 -->
+        <service
+            android:name=".WeChatNotificationService"
+            android:exported="false"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- 下拉通知栏里的快捷开关 -->
+        <service
+            android:name=".QuickToggleTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!--
+          兜底：无障碍操作界面。用户不开也不影响主力方案。
+
+          这里必须 exported="true"，和上面的通知监听恰好相反：
+          官方文档对两者的要求就是不一样的（通知监听是 false）。
+          写成 false 的后果是这个服务压根不出现在「无障碍」设置列表里，
+          用户想开也开不了——正是通知里没有「回复」按钮时唯一的退路。
+          真正的越权由 BIND_ACCESSIBILITY_SERVICE 挡着：
+          只有系统持有这个权限，别的 App 绑不上来。
+        -->
+        <service
+            android:name=".WeChatAccessibilityService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+    </application>
+</manifest>

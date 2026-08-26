@@ -1,0 +1,9 @@
+Package: com.wxauto.autoreply
+Name: WXAutoReply
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: 微信消息自动回复，规则由本地 HTTP 服务下发
+Maintainer: you
+Author: you
+Section: Tweaks
+Depends: mobilesubstrate (>= 0.9.5000), firmware (>= 14.0)

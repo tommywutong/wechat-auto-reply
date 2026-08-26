@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 对话气泡 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M34,34h40a6,6 0 0 1 6,6v22a6,6 0 0 1 -6,6h-22l-12,10v-10h-6a6,6 0 0 1 -6,-6v-22a6,6 0 0 1 6,-6z" />
+    <!-- 三个点，表示自动回复 -->
+    <path
+        android:fillColor="#07C160"
+        android:pathData="M46,50m-3,0a3,3 0 1,0 6,0a3,3 0 1,0 -6,0" />
+    <path
+        android:fillColor="#07C160"
+        android:pathData="M57,50m-3,0a3,3 0 1,0 6,0a3,3 0 1,0 -6,0" />
+    <path
+        android:fillColor="#07C160"
+        android:pathData="M68,50m-3,0a3,3 0 1,0 6,0a3,3 0 1,0 -6,0" />
+</vector>

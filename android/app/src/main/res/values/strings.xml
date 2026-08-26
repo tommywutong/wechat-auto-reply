@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">微信自动回复</string>
+    <string name="tile_on">已开启</string>
+    <string name="tile_off">已关闭</string>
+    <string name="a11y_description">在微信聊天界面读取最后一条消息并按规则自动回复。仅当通知里没有「回复」按钮时才需要开启。</string>
+</resources>

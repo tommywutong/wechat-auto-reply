@@ -33,8 +33,9 @@ App 首次打开时，在左侧底部选择项目目录。默认会自动发现�
 
 设置保存到本地 `core/config.yaml`，其中 `scope.allow_talkers` 保存 TraceMemo 稳定会话
 ID，`scope.allow_contacts` 作为旧配置兼容和显示名称备份；轮询间隔保存到
-`var/poll-interval`。保存设置后 App 会自动重启 `launchd` 服务。API Token 仍只从
-macOS Keychain 读取，App 不会显示或写入 Token。
+`var/poll-interval`。保存设置后 App 会同时重启 `com.wxauto.server` 规则服务和
+`com.wxauto.tracememo-autoreply` 自动回复服务，确保人设、模型、回复模式以及
+轮询/限流设置都从最新配置加载。API Token 仍只从 macOS Keychain 读取，App 不会显示或写入 Token。
 
 首次进入会话管理页时，App 通过 `scripts/tracememo_contacts.py` 调用本机 TraceMemo
 `/recent_chat` 和 `/contact` 接口。`/recent_chat` 提供微信侧最近活跃顺序；如果旧版

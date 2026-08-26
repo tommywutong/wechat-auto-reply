@@ -207,6 +207,7 @@ enum SessionCatalog {
 
 enum AppPaths {
     static let serviceLabel = "com.wxauto.tracememo-autoreply"
+    static let engineServiceLabel = "com.wxauto.server"
 
     static func discover() -> URL? {
         let fileManager = FileManager.default
@@ -419,7 +420,7 @@ final class AppModel: ObservableObject {
         }
         let status = ServiceController.status()
         serviceState = status
-        localServerRunning = ServiceController.status(label: "com.wxauto.server") == .running
+        localServerRunning = ServiceController.status(label: AppPaths.engineServiceLabel) == .running
         traceMemoKeychain = ServiceController.keychainExists(service: "com.wxauto.tracememo-api-token")
         deepSeekKeychain = ServiceController.keychainExists(service: "com.wxauto.deepseek-api-key")
         Task { [weak self] in
@@ -470,13 +471,34 @@ final class AppModel: ObservableObject {
                 return
             }
 
+            // The poller and the HTTP engine are separate launchd jobs. The
+            // poller reads scope/limits itself, while the engine keeps the
+            // persona, model, and reply policy in memory until it restarts.
+            let engineRestart = ServiceController.perform(
+                .restart,
+                repoURL: repoURL,
+                label: AppPaths.engineServiceLabel
+            )
+            guard engineRestart.status == 0 else {
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.isBusy = false
+                    self.operationMessage = "设置已保存，但规则服务重启失败。"
+                    self.errorMessage = engineRestart.stderr.isEmpty
+                        ? "请手动重启规则服务后再试。"
+                        : engineRestart.stderr
+                    self.refreshStatus()
+                }
+                return
+            }
+
             let restart = ServiceController.perform(.restart, repoURL: repoURL)
             let verify = restart.status == 0 ? ConfigBridge.load(repoURL: repoURL) : restart
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.isBusy = false
                 guard restart.status == 0 else {
-                    self.operationMessage = "设置已保存，但服务重启失败。"
+                    self.operationMessage = "规则服务已更新，但自动回复服务重启失败。"
                     self.errorMessage = restart.stderr.isEmpty ? "请手动重启服务。" : restart.stderr
                     self.refreshStatus()
                     return
@@ -702,31 +724,41 @@ enum ServiceController {
         return .unknown(result.stdout)
     }
 
-    static func perform(_ action: ServiceAction, repoURL: URL) -> CommandResult {
-        let label = AppPaths.serviceLabel
+    static func perform(
+        _ action: ServiceAction,
+        repoURL: URL,
+        label: String = AppPaths.serviceLabel
+    ) -> CommandResult {
         switch action {
         case .stop:
             let result = CommandRunner.run("/bin/launchctl", ["bootout", "\(domain())/\(label)"])
-            return result.status == 0 || status() == .stopped
+            return result.status == 0 || status(label: label) == .stopped
                 ? CommandResult(status: 0, stdout: result.stdout, stderr: "")
                 : result
         case .start:
-            if status() != .stopped {
+            if status(label: label) != .stopped {
                 return CommandRunner.run("/bin/launchctl", ["kickstart", "-k", "\(domain())/\(label)"])
             }
-            return bootstrap(repoURL: repoURL)
+            return bootstrap(repoURL: repoURL, label: label)
         case .restart:
             _ = CommandRunner.run("/bin/launchctl", ["bootout", "\(domain())/\(label)"])
-            return bootstrap(repoURL: repoURL)
+            return bootstrap(repoURL: repoURL, label: label)
         }
     }
 
-    private static func bootstrap(repoURL: URL) -> CommandResult {
+    private static func bootstrap(repoURL: URL, label: String) -> CommandResult {
         let plist = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/LaunchAgents/\(AppPaths.serviceLabel).plist")
+            .appendingPathComponent("Library/LaunchAgents/\(label).plist")
         if FileManager.default.fileExists(atPath: plist.path) {
             let result = CommandRunner.run("/bin/launchctl", ["bootstrap", domain(), plist.path])
             if result.status == 0 { return result }
+        }
+        guard label == AppPaths.serviceLabel else {
+            return CommandResult(
+                status: 1,
+                stdout: "",
+                stderr: "找不到规则服务的 launchd 配置，请先运行 scripts/macos-setup.sh。"
+            )
         }
         let install = repoURL.appendingPathComponent("scripts/install-tracememo-autoreply.sh")
         return CommandRunner.run("/bin/bash", [install.path], cwd: repoURL)

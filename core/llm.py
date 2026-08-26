@@ -19,6 +19,17 @@ from .persona import ConversationMemory, build_system_prompt
 logger = logging.getLogger(__name__)
 
 
+def _sanitize_salutation(text: str, chat_name: str) -> str:
+    """过滤模型沿用历史样例的错误身份称呼。"""
+
+    if chat_name and "老林" in chat_name:
+        return text
+    if "老林" in text:
+        logger.warning("模型生成了未配置的身份称呼，丢弃本条回复")
+        return ""
+    return text.strip()
+
+
 class ClaudeReplyWriter:
     """把一条微信消息变成一句像我说的话。构造一次，重复使用。"""
 
@@ -64,6 +75,15 @@ class ClaudeReplyWriter:
                 f"（群「{message.chat_name}」里 {message.sender_name} 说）"
                 + messages[-1]["content"]
             )
+        messages[-1]["content"] += (
+            f"\n\n【称呼约束】当前会话显示名是「{message.chat_name}」。"
+            "不要把对方称作其他姓名；除非对方在本条消息中明确自称，否则不要猜测称呼。"
+        )
+        if message.batch_size > 1:
+            messages[-1]["content"] += (
+                f"\n【连续消息】这是对方短时间内连续发来的 {message.batch_size} 条消息。"
+                "请自行判断合并回答或分点回答，不要逐条机械复述。"
+            )
 
         try:
             response = self._client.beta.messages.create(
@@ -93,7 +113,7 @@ class ClaudeReplyWriter:
             return None
 
         # 模型偶尔会自带引号，去掉以免发出去很怪
-        text = text.strip("「」\"'“”").strip()
+        text = _sanitize_salutation(text.strip("「」\"'“”").strip(), message.chat_name)
 
         # 超长时截断而不是原样发出：宁可短一点，也别一眼假
         limit = persona.max_chars

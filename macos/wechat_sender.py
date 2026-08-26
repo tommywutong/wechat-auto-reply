@@ -1,4 +1,4 @@
-"""用 macOS 原生界面能力向已确认的微信会话发送一条文字。
+"""用 macOS 原生界面能力向已确认的微信会话发送一条文字（可含 emoji）。
 
 微信 4.x 不稳定暴露辅助功能树，因此这里不依赖控件路径：
 用快捷键搜索会话，用窗口截图 + Vision OCR 确认目标，再按窗口相对位置
@@ -304,6 +304,24 @@ def _compact(value: str) -> str:
     return "".join((value or "").split()).casefold()
 
 
+def _is_emoji_char(char: str) -> bool:
+    codepoint = ord(char)
+    return (
+        0x1F000 <= codepoint <= 0x1FAFF
+        or 0x2600 <= codepoint <= 0x27BF
+        or codepoint in {0xFE0E, 0xFE0F, 0x200D, 0x20E3}
+        or 0x1F3FB <= codepoint <= 0x1F3FF
+    )
+
+
+def _without_emoji(value: str) -> str:
+    return "".join(char for char in value if not _is_emoji_char(char))
+
+
+def _emoji_only(value: str) -> bool:
+    return bool(value.strip()) and not _without_emoji(value).strip()
+
+
 _MEMBER_COUNT_SUFFIX = re.compile(r"[（(]\d+[）)]$")
 
 
@@ -530,7 +548,10 @@ def _contains_text(
 
     # Vision 可能漏掉括号、逗号等标点。仅在去除标点后仍完整包含目标时
     # 通过，避免单个短词误判为已粘贴成功。
-    wanted_core = "".join(char for char in wanted if char.isalnum() or "\u4e00" <= char <= "\u9fff")
+    wanted_core = "".join(
+        char for char in _without_emoji(wanted)
+        if char.isalnum() or "\u4e00" <= char <= "\u9fff"
+    )
     observed_core = "".join(char for char in observed if char.isalnum() or "\u4e00" <= char <= "\u9fff")
     return bool(wanted_core and wanted_core in observed_core)
 
@@ -812,6 +833,11 @@ class WeChatSender:
                     y_min=y_min,
                     y_max=y_max,
                 ):
+                    return
+                # Vision OCR 不会返回纯 emoji。会话标题、输入框焦点和粘贴
+                # 动作都已在前面确认，此时用剪贴板回读兜底，避免把合法的
+                # 「😂」当成粘贴失败而重复尝试。
+                if _emoji_only(text) and _clipboard_read() == text:
                     return
                 self._save_failure_artifact(
                     image,

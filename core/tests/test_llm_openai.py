@@ -187,6 +187,24 @@ def test_wrapping_quotes_are_stripped(server):
     assert _writer(server)(_msg(), _config()) == "在，怎么了"
 
 
+def test_unconfigured_salutation_is_rejected(server):
+    _, handler = server
+    handler.script = [(200, _reply("老林，收到啦"))]
+
+    result = _writer(server)(_msg(chat_name="Biscoffee"), _config())
+
+    assert result is None
+    user_prompt = handler.seen[0]["body"]["messages"][-1]["content"]
+    assert "当前会话显示名是「Biscoffee」" in user_prompt
+
+
+def test_unconfigured_identity_is_rejected(server):
+    _, handler = server
+    handler.script = [(200, _reply("我是老林，不是AI"))]
+
+    assert _writer(server)(_msg(chat_name="郑成龙"), _config()) is None
+
+
 def test_runaway_output_is_truncated(server):
     _, handler = server
     handler.script = [(200, _reply("啊" * 300))]

@@ -119,6 +119,128 @@ def test_timestamp_accepts_tracememo_datetime_field() -> None:
     assert parsed > 1_700_000_000
 
 
+def test_parse_messages_keeps_image_and_sticker_metadata() -> None:
+    conversation = poller.Conversation("wxid-a", "Loky", False)
+    payload = {
+        "data": [
+            {
+                "serverId": "image-1",
+                "content": "",
+                "isSender": 0,
+                "type": "图片",
+                "contentData": {
+                    "url": "https://example.test/image.jpg",
+                    "md5": "a" * 32,
+                },
+                "createTime": 1_700_000_000,
+            },
+            {
+                "serverId": "sticker-1",
+                "content": "",
+                "isSender": 0,
+                "type": "表情包",
+                "contentData": {"encryptUrl": "https://example.test/sticker.gif"},
+                "createTime": 1_700_000_001,
+            },
+        ]
+    }
+
+    messages = poller.parse_messages(payload, conversation)
+
+    assert [message.message_type for message in messages] == ["image", "sticker"]
+    assert messages[0].media_url.endswith("image.jpg")
+    assert messages[1].text == "【表情包】"
+
+
+def test_media_recognizer_adds_ocr_text(monkeypatch, tmp_path: Path) -> None:
+    recognizer = poller.MediaRecognizer(repo_dir=tmp_path)
+    monkeypatch.setattr(recognizer, "_download", lambda url, path: True)
+    monkeypatch.setattr(recognizer, "_ocr", lambda path: "会议改到三点")
+    message = poller.ChatMessage(
+        "image-1",
+        "wxid-a",
+        "Loky",
+        "【图片】",
+        1_700_000_000,
+        "Loky",
+        False,
+        False,
+        message_type="image",
+        media_url="https://example.test/image.jpg",
+    )
+
+    enriched = recognizer.enrich(message)
+
+    assert enriched.ocr_text == "会议改到三点"
+    assert enriched.text == "【图片】图片文字：会议改到三点"
+
+
+class _CapturingEngine:
+    def __init__(self) -> None:
+        self.messages: list[poller.ChatMessage] = []
+
+    def draft(self, message, style_context=""):
+        self.messages.append(message)
+        return {"should_reply": False, "reason": "test"}
+
+
+def test_poller_batches_continuous_messages_for_one_engine_decision(tmp_path: Path) -> None:
+    now = 1_800_000_000
+    messages = [
+        poller.ChatMessage("m1", "biscoffee-id", "Biscoffee", "你在吗", now, "Biscoffee", False, False),
+        poller.ChatMessage("m2", "biscoffee-id", "Biscoffee", "有个问题想问", now + 2, "Biscoffee", False, False),
+    ]
+    engine = _CapturingEngine()
+    state = poller.PollState(tmp_path / "state.json")
+    state.ready_talkers.add("biscoffee-id")
+    state.last_polled_at = now - 10
+    instance = poller.Poller(
+        _FakeTraceMemo(messages),
+        engine,
+        {"biscoffee"},
+        state,
+        poller.DraftWriter(tmp_path / "drafts.jsonl"),
+    )
+    original_time = poller.time.time
+    poller.time.time = lambda: now
+    try:
+        stats = instance.tick()
+    finally:
+        poller.time.time = original_time
+
+    assert stats.new_messages == 2
+    assert len(engine.messages) == 1
+    assert engine.messages[0].batch_size == 2
+    assert "你在吗" in engine.messages[0].text and "有个问题想问" in engine.messages[0].text
+
+
+def test_poller_splits_messages_outside_merge_window(tmp_path: Path) -> None:
+    now = 1_800_000_000
+    messages = [
+        poller.ChatMessage("m1", "biscoffee-id", "Biscoffee", "第一条", now, "Biscoffee", False, False),
+        poller.ChatMessage("m2", "biscoffee-id", "Biscoffee", "第二条", now + 20, "Biscoffee", False, False),
+    ]
+    engine = _CapturingEngine()
+    state = poller.PollState(tmp_path / "state.json")
+    state.ready_talkers.add("biscoffee-id")
+    state.last_polled_at = now - 10
+    instance = poller.Poller(
+        _FakeTraceMemo(messages),
+        engine,
+        {"biscoffee"},
+        state,
+        poller.DraftWriter(tmp_path / "drafts.jsonl"),
+    )
+    original_time = poller.time.time
+    poller.time.time = lambda: now + 20
+    try:
+        instance.tick()
+    finally:
+        poller.time.time = original_time
+
+    assert len(engine.messages) == 2
+
+
 class _FakeTraceMemo:
     def __init__(self, messages: list[poller.ChatMessage], conversations=None) -> None:
         self.messages = messages

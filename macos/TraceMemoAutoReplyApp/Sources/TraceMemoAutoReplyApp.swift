@@ -178,9 +178,9 @@ enum AppPaths {
 
     static func isRepository(_ url: URL) -> Bool {
         let scripts = url.appendingPathComponent("scripts/run-tracememo-autoreply.sh")
-        let config = url.appendingPathComponent("core/config.yaml")
+        let configTemplate = url.appendingPathComponent("core/config.ai.example.yaml")
         return FileManager.default.isReadableFile(atPath: scripts.path)
-            && FileManager.default.isReadableFile(atPath: config.path)
+            && FileManager.default.isReadableFile(atPath: configTemplate.path)
     }
 }
 
@@ -341,7 +341,7 @@ final class AppModel: ObservableObject {
         panel.prompt = "选择项目"
         if panel.runModal() == .OK, let url = panel.url {
             guard AppPaths.isRepository(url) else {
-                errorMessage = "所选目录不是自动回复项目，缺少 scripts 或 core/config.yaml。"
+                errorMessage = "所选目录不是自动回复项目，缺少启动脚本或配置模板。"
                 return
             }
             repoURL = url

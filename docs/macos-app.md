@@ -14,7 +14,8 @@ open "dist/TraceMemo 自动回复.app"
 ```
 
 App 首次打开时，在左侧底部选择项目目录。默认会自动发现当前仓库，也可以通过
-`WXAUTO_REPO_DIR` 指定其他项目目录。
+`WXAUTO_REPO_DIR` 指定其他项目目录。项目发现不依赖个人 `core/config.yaml`；若该文件
+缺失，App 会连接项目并提示初始化配置，而不会要求重新选择目录。
 
 ## 功能
 

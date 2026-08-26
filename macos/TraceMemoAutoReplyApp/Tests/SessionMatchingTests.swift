@@ -40,4 +40,28 @@ final class SessionMatchingTests: XCTestCase {
         let searched = SessionCatalog.filter(recent + [official], query: "会话 34", kind: "all")
         XCTAssertEqual(searched.map(\.talker), ["wxid-34"])
     }
+
+    func testRepositoryDiscoveryAcceptsProjectBeforePersonalConfigExists() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(
+            at: directory.appendingPathComponent("scripts"),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: directory.appendingPathComponent("core"),
+            withIntermediateDirectories: true
+        )
+        FileManager.default.createFile(
+            atPath: directory.appendingPathComponent("scripts/run-tracememo-autoreply.sh").path,
+            contents: Data()
+        )
+        FileManager.default.createFile(
+            atPath: directory.appendingPathComponent("core/config.ai.example.yaml").path,
+            contents: Data()
+        )
+
+        XCTAssertTrue(AppPaths.isRepository(directory))
+    }
 }

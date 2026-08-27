@@ -299,6 +299,33 @@ def test_poller_replays_history_only_when_enabled(tmp_path: Path) -> None:
     assert len(engine.messages) == 1
 
 
+def test_poller_replay_mode_handles_first_seen_conversation(tmp_path: Path) -> None:
+    now = 1_800_000_000
+    messages = [
+        poller.ChatMessage("old", "new-id", "新会话", "停机期间的消息", now - 30, "新会话", False, False),
+    ]
+    engine = _CapturingEngine()
+    state = poller.PollState(tmp_path / "state.json")
+    state.last_polled_at = now - 120
+    instance = poller.Poller(
+        _FakeTraceMemo(messages, conversations=[poller.Conversation("new-id", "新会话", False)]),
+        engine,
+        {"新会话"},
+        state,
+        poller.DraftWriter(tmp_path / "drafts.jsonl"),
+        replay_offline=True,
+    )
+    original_time = poller.time.time
+    poller.time.time = lambda: now
+    try:
+        stats = instance.tick()
+    finally:
+        poller.time.time = original_time
+
+    assert stats.new_messages == 1
+    assert len(engine.messages) == 1
+
+
 def test_poll_state_save_without_cursor_advance_persists_claim(tmp_path: Path) -> None:
     path = tmp_path / "state.json"
     state = poller.PollState(path)

@@ -15,6 +15,7 @@
 | `macos-setup.sh` | 建 venv、生成配置/Token、安装基础规则服务 |
 | `build-macos-helpers.sh` | 编译 OCR、点击和滚动 helper |
 | `build-macos-app.sh` | 构建并打包 SwiftUI App |
+| `update-macos-app.sh` | 仅在干净 `main` 可快进时更新代码并重建控制 App |
 | `run-macos-app.sh` | 运行控制 App |
 | `install-tracememo-poller.sh` | 安装草稿轮询 launchd 服务 |
 | `install-tracememo-autoreply.sh` | 安装真实自动回复 launchd 服务 |
@@ -35,6 +36,7 @@
 - 保持 `set -euo pipefail`，并对预期失败显式处理。
 - launchd 启动前清理可能继承的明文密钥；真实凭据优先从 Keychain 读取。
 - 脚本重复运行应尽可能幂等，不生成多个同标签服务或并发轮询器。
+- 自动更新只允许干净的 `main` 做 fast-forward；工作区有本地改动、分支分叉或网络失败时必须跳过，不能从 App 启动路径覆盖用户内容。
 - 真实发送脚本必须保留白名单、helper 检查和失败关闭。
 - 生成文件写入已忽略路径，不提交机器绝对路径和私人值。
 

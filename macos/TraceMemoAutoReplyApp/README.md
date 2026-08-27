@@ -9,9 +9,10 @@
 ```bash
 cd macos/TraceMemoAutoReplyApp && swift test
 cd ../..
-bash scripts/build-macos-app.sh
-open "dist/TraceMemo 自动回复.app"
+bash scripts/run-macos-app.sh
 ```
+
+控制 App 启动或再次点击 Dock 图标时会检查当前项目的 `main` 远端分支；只有工作区干净且能快进时才自动拉取并重建，完成后会自动切换到新版本。若检测到本地修改、分支分叉或网络不可用，会保留当前版本。自动更新不会强制重启后台服务；需要加载新代码时，在概览里点击“重启服务”。关闭窗口不会退出 App，点击 Dock 图标会重新显示控制面板。
 
 打开 App 属于本机 UI 操作；自动化环境不应在未经允许时执行最后一条命令。
 
@@ -30,6 +31,7 @@ App 通过仓库脚本完成配置和会话读取：
 - `scripts/app_config.py`
 - `scripts/tracememo_contacts.py`
 - `scripts/install-tracememo-autoreply.sh`
+- `scripts/update-macos-app.sh`
 - `scripts/build-macos-app.sh`
 
 设置写入本机 `core/config.yaml` 和 `var/poll-interval`。Token 保持在 Keychain 或受保护的兼容路径中，不进入 SwiftUI 状态。

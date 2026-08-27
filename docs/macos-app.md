@@ -9,13 +9,14 @@ TraceMemo、DeepSeek 或微信界面发送器，只负责把常用的启动、�
 在 macOS、Swift 5.9 或更高版本上运行：
 
 ```bash
-bash scripts/build-macos-app.sh
-open "dist/TraceMemo 自动回复.app"
+bash scripts/run-macos-app.sh
 ```
 
 App 首次打开时，在左侧底部选择项目目录。默认会自动发现当前仓库，也可以通过
 `WXAUTO_REPO_DIR` 指定其他项目目录。项目发现不依赖个人 `core/config.yaml`；若该文件
 缺失，App 会连接项目并提示初始化配置，而不会要求重新选择目录。
+
+每次启动或点击 Dock 图标重新打开时，App 会检查远端 `main`。只有工作区干净且提交历史可安全快进时才会自动拉取并重建；本地有修改、分支分叉或网络失败会跳过。自动更新只替换控制 App，不会强制中断后台服务；服务要加载新代码时，请在概览页点击“重启服务”。
 
 ## 功能
 

@@ -27,6 +27,7 @@ rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
 cp "$PRODUCT_DIR/TraceMemoAutoReply" "$APP_BUNDLE/Contents/MacOS/TraceMemoAutoReply"
 cp "$APP_PROJECT/Resources/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
+git -C "$REPO_DIR" rev-parse HEAD > "$APP_BUNDLE/Contents/Resources/git-revision" 2>/dev/null || printf 'unknown\n' > "$APP_BUNDLE/Contents/Resources/git-revision"
 chmod +x "$APP_BUNDLE/Contents/MacOS/TraceMemoAutoReply"
 
 echo "App 已生成：$APP_BUNDLE"

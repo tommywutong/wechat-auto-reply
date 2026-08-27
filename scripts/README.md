@@ -16,6 +16,7 @@
 ### 会修改本机状态
 
 - `macos-setup.sh`
+- `update-macos-app.sh`（仅在工作区干净且可快进时拉取 `main`）
 - `install-tracememo-poller.sh`
 - `install-tracememo-autoreply.sh`
 - `app_config.py` 的写入操作
@@ -27,7 +28,8 @@
 
 - `run-tracememo-poller.sh`：草稿模式。
 - `run-tracememo-autoreply.sh`：真实发送模式。
-- `run-macos-app.sh`：控制面板。
+- `update-macos-app.sh`：检查远端 `main` 并按提交号重建控制 App；本地有未提交修改、分支分叉或网络失败时跳过更新，不覆盖本机内容。
+- `run-macos-app.sh`：执行上述更新检查后打开控制面板。
 - `watch-tracememo-autoreply.sh`：状态与日志观察。
 
 ## 常用入口

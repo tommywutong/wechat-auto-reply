@@ -22,7 +22,7 @@ open "dist/TraceMemo 自动回复.app"
 
 [![编译安卓 APK](https://github.com/tommywutong/wechat-auto-reply/actions/workflows/build-apk.yml/badge.svg)](https://github.com/tommywutong/wechat-auto-reply/actions/workflows/build-apk.yml)
 ![平台](https://img.shields.io/badge/平台-Android%20%7C%20macOS%20%7C%20iOS-lightgrey)
-![测试](https://img.shields.io/badge/测试-185%20passed-brightgreen)
+![测试](https://img.shields.io/badge/测试-193%20passed-brightgreen)
 
 基于大语言模型的微信自动回复系统。通过一套可配置的人设与应对策略生成回复，
 而非关键词匹配，因此能够处理未预设的对话内容。
@@ -47,6 +47,7 @@ Keychain 读取。TraceMemo 需要单独安装并保持数据库连接。
 
 - [设计目标](#设计目标)
 - [核心特性](#核心特性)
+- [Android 与 macOS 的区别](#android-与-macos-的区别)
 - [系统要求](#系统要求)
 - [安装部署](#安装部署)
 - [人设配置](#人设配置)
@@ -93,12 +94,29 @@ Keychain 读取。TraceMemo 需要单独安装并保持数据库连接。
 | **一键开关** | Android 支持通知栏快捷开关 |
 | **零服务依赖** | Android 端引擎内嵌，无需服务器或局域网 |
 
+## Android 与 macOS 的区别
+
+两端共用同一套安全判断、人设配置和模型接口，但消息的读取和发送方式完全不同：
+
+| 对比项 | Android 版 | macOS 版 |
+|---|---|---|
+| **运行位置** | 微信手机旁的 Android 设备 | 一台常开的 Mac，微信桌面端保持登录 |
+| **消息入口** | Android 通知监听；通知没有回复入口时可用无障碍兜底 | TraceMemo 本机 HTTP API 读取联系人、最近会话和聊天记录 |
+| **微信是否要在前台** | 通知方案不需要；无障碍兜底需要停在聊天页 | 读取由 TraceMemo 完成；真实发送时会定位并操作 Mac 微信窗口 |
+| **电脑要求** | 不需要电脑，服务和引擎都在 APK 内 | 需要 Mac、Python、TraceMemo 和 Swift 构建工具 |
+| **消息完整度** | 受系统通知内容限制，长消息可能被截断；免打扰会话通常没有通知 | 通过聊天记录读取，内容更完整；打开会话读取时可能清除未读状态 |
+| **图片与表情包** | 当前主要按通知文本处理，不保证能读到媒体内容 | TraceMemo 提供媒体地址时可下载并用 macOS Vision OCR 尝试识别；回复可发送 Unicode emoji |
+| **网络与数据** | 关键词模式可完全离线；AI 模式从手机直连所选模型或中继服务 | 消息、日志和配置留在 Mac；AI 请求从 Mac 发出，凭据放在 macOS Keychain |
+| **适合场景** | 没有常开电脑、希望手机独立运行 | iPhone 用户、需要更完整消息、希望用桌面控制面板管理服务 |
+
+简单选择：没有 Mac 就用 Android；有 Mac 且希望代理 iPhone 上的同一个微信号，优先用 macOS。
+
 ## 系统要求
 
 | 部署方式 | 要求 | 是否需要电脑 |
 |---|---|---|
 | **Android** | Android 8.0 (API 26) 及以上 | 否 |
-| **macOS** | macOS 12 及以上，Python 3.9+，已登录 macOS 版微信 | 是（需常驻运行） |
+| **macOS 控制 App** | macOS 13 及以上，Python 3.9+，Swift 5.9+/Xcode Command Line Tools，已登录 macOS 版微信和 TraceMemo | 是（需常驻运行） |
 
 iPhone 用户请采用 macOS 方案：微信支持手机与桌面端同时在线且共享消息，
 在 Mac 端回复等效于本人在 iPhone 上回复，无需越狱或安装任何 iOS 应用。
@@ -129,33 +147,110 @@ https://github.com/tommywutong/wechat-auto-reply/releases/latest/download/wechat
 
 ### macOS
 
+macOS 版目前需要从源码自行安装，没有提供可直接双击的签名安装包。完整链路由
+`TraceMemo → 本地规则服务 → 自动回复轮询器 → Mac 微信界面` 组成；Mac 需要保持开机、
+微信登录和 TraceMemo 数据库连接。
+
+#### 1. 准备环境
+
+安装以下软件：
+
+- macOS 13 或更高版本
+- Mac 版微信，并登录要自动回复的微信号
+- [TraceMemo](https://github.com/Wxw-Gu/TraceMemo)，启动后完成数据库连接
+- Python 3.9 或更高版本
+- Xcode Command Line Tools（构建 Swift 控制 App、OCR 和鼠标辅助程序）
+
+如果尚未安装开发者命令行工具，可在终端执行：
+
+```bash
+xcode-select --install
+```
+
+#### 2. 下载并初始化项目
+
 ```bash
 git clone https://github.com/tommywutong/wechat-auto-reply.git
 cd wechat-auto-reply
 bash scripts/macos-setup.sh
 ```
 
-不熟悉命令行者可直接双击仓库中的 `安装到Mac.command`。
+脚本会创建项目专用的 `.venv`、生成 `core/config.yaml` 和本地 token、安装规则服务，
+并写入可双击运行的辅助启动器。已有配置时不会覆盖 `core/config.yaml`。
 
-> 该文件来自网络下载，会被 Gatekeeper 拦截。macOS 15 起「右键 → 打开」
-> 不再提供绕过选项，需前往 系统设置 → 隐私与安全性 → 安全性，
-> 点击「仍要打开」。该按钮仅在触发拦截后的短时间内显示。
+不熟悉终端时，也可以在 Finder 中双击仓库里的 `安装到Mac.command`；它执行同一套初始化流程。
+从网络下载的 `.command` 文件若被 Gatekeeper 拦截，请在“系统设置 → 隐私与安全性 → 安全性”中
+点击“仍要打开”。
 
-安装脚本将完成以下工作：创建虚拟环境、运行配置问答、生成访问令牌、
-注册 launchd 开机自启服务、生成三个可双击运行的启动器。
+#### 3. 把凭据放进 macOS Keychain
 
-安装完成后需授予辅助功能权限（系统设置 → 隐私与安全性 → 辅助功能 → 勾选终端），
-然后按顺序运行：
+TraceMemo Token 是读取本机聊天数据所必需的；AI 模式还需要 DeepSeek Key。下面两条命令会
+交互式提示输入内容，输入时不会回显，也不会把密钥写进项目文件：
 
-| 启动器 | 作用 |
-|---|---|
-| `1 检查微信.command` | 检测界面结构兼容性，不读取也不发送消息 |
-| `2 试运行（不真发消息）.command` | 输出决策结果，不实际发送 |
-| `3 开始自动回复.command` | 正式运行 |
+```bash
+security add-generic-password -U -a "$USER" -s com.wxauto.tracememo-api-token -w
+security add-generic-password -U -a "$USER" -s com.wxauto.deepseek-api-key -w
+```
 
-自动回复服务每次启动默认只建立当前历史游标，不会追补停机期间已经收到的消息。
-需要追补时，可在 macOS 控制 App 的设置中打开“启动时追补停机消息”，或手动给轮询器加上
-`--replay-offline` 参数。
+可以只验证条目是否存在，不会打印密钥：
+
+```bash
+security find-generic-password -a "$USER" -s com.wxauto.tracememo-api-token >/dev/null && echo "TraceMemo Token 已保存"
+security find-generic-password -a "$USER" -s com.wxauto.deepseek-api-key >/dev/null && echo "DeepSeek Key 已保存"
+```
+
+#### 4. 构建并打开 macOS 控制 App
+
+```bash
+bash scripts/build-macos-app.sh
+open "dist/TraceMemo 自动回复.app"
+```
+
+首次打开后，在窗口底部选择刚刚克隆的项目目录。控制 App 会读取 TraceMemo 的联系人和群聊，
+用稳定会话 ID 管理白名单，并统一管理规则服务与自动回复服务。设置保存后会自动重启相关服务，
+无需手动编辑 YAML。
+
+#### 5. 授予系统权限
+
+在“系统设置 → 隐私与安全性”中，把实际运行脚本或控制 App 的程序加入并打开：
+
+- **辅助功能**：读取和操作微信窗口
+- **屏幕录制**：截取微信窗口用于 OCR 和发送前确认
+
+首次授权后，退出并重新打开控制 App 或终端，确保权限生效。
+
+#### 6. 先安全试跑，再开启真实发送
+
+保持微信和 TraceMemo 运行，在项目目录按顺序执行：
+
+```bash
+"./1 检查微信.command"
+"./2 试运行（不真发消息）.command"
+```
+
+第一步只诊断微信界面，不读取或发送消息；第二步会生成决策和本地草稿，但不会按发送键。
+确认白名单、群聊 `@` 规则和回复内容都正确后，再执行：
+
+```bash
+"./3 开始自动回复.command"
+```
+
+也可以直接在控制 App 的概览页启动服务。启动时默认跳过停机期间已经存在的旧消息；需要追补时，
+在设置中打开“启动时追补停机消息”。
+
+#### 7. 日常运行与停止
+
+控制 App 的“启动、停止、重启”会同时管理规则服务和自动回复服务。关闭控制 App 不会停止后台服务；
+要停止自动回复，点击“停止服务”，或执行：
+
+```bash
+launchctl bootout "gui/$(id -u)/com.wxauto.tracememo-autoreply"
+```
+
+Mac 需要保持唤醒；合盖或进入睡眠后，微信界面发送无法继续。详细故障排查见
+[docs/macos-app.md](docs/macos-app.md) 和 [docs/tracememo-macos-draft-mode.md](docs/tracememo-macos-draft-mode.md)。
+
+旧的纯终端 `run-mac-bot.sh` 仍可用于兼容场景；新安装优先使用上面的 TraceMemo 控制 App 流程。
 
 ## 人设配置
 
@@ -291,7 +386,7 @@ core/                 决策引擎（Python），109 项测试
 server/app.py         HTTP 服务（FastAPI），供 macOS 端及中继模式使用
 android/              Android 客户端（Kotlin），76 项测试
   engine/               引擎、问答、模型调用的 Kotlin 实现
-macos/                macOS 采集端（辅助功能 API）
+macos/                macOS 采集端与 TraceMemo 轮询器（辅助功能 API）
 ios/                  iOS 方案参考实现，见下
 docs/                 部署、多账号、iOS 可行性分析
 ```
@@ -312,7 +407,7 @@ docs/                 部署、多账号、iOS 可行性分析
 ## 开发与测试
 
 ```bash
-python -m pytest -q                          # 109 项
+python -m pytest -q                          # 193 项
 cd android && ./gradlew testDebugUnitTest     # 76 项
 ```
 

@@ -989,11 +989,14 @@ class Poller:
             if not self._conversation_allowed(conversation):
                 continue
             stats.conversations_scanned += 1
-            # 首次看到一个会话只建立游标，不处理历史消息。
+            # 默认模式首次看到一个会话只建立游标，不处理历史消息；
+            # 显式追补模式则继续处理旧游标之后的消息。
             if conversation.talker not in self._state.ready_talkers:
                 self._state.ready_talkers.add(conversation.talker)
-                logger.info("已建立会话游标：%s", conversation.name)
-                continue
+                if self._skip_startup_history:
+                    logger.info("已建立会话游标，跳过启动前历史：%s", conversation.name)
+                    continue
+                logger.info("已建立会话游标，按追补策略处理历史：%s", conversation.name)
             try:
                 if self._self_nicknames:
                     messages = self._trace_memo.chatlog(

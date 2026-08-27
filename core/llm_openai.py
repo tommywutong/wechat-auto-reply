@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import urllib.error
 import urllib.request
 from typing import Optional
@@ -24,6 +25,49 @@ from .providers import PROVIDERS
 
 logger = logging.getLogger(__name__)
 
+_GENERIC_DEFER_REPLY = re.compile(
+    r"(?:忙完|等会(?:儿)?|一会(?:儿)?|晚点|回头).{0,8}(?:再说|回(?:你)?|聊|看)"
+    r"|(?:等我).{0,8}(?:回(?:你)?|回复|再说)",
+    re.IGNORECASE,
+)
+_CASUAL_MESSAGE_HINTS = (
+    "在吗",
+    "在不在",
+    "咋了",
+    "怎么了",
+    "干嘛",
+    "忙吗",
+    "忙不忙",
+    "方便吗",
+    "哈哈",
+    "笑死",
+    "最近",
+    "吃了吗",
+    "好久不见",
+    "牛",
+    "收到",
+)
+_HUMAN_CONFIRMATION_HINTS = (
+    "约",
+    "见面",
+    "明天",
+    "后天",
+    "今晚",
+    "下周",
+    "几点",
+    "时间",
+    "日程",
+    "地址",
+    "报价",
+    "价格",
+    "钱",
+    "合同",
+    "转账",
+    "付款",
+    "借",
+    "投票",
+)
+
 
 def _sanitize_salutation(text: str, chat_name: str) -> str:
     """过滤模型沿用历史样例的错误身份称呼。"""
@@ -34,6 +78,31 @@ def _sanitize_salutation(text: str, chat_name: str) -> str:
         logger.warning("模型生成了未配置的身份称呼，丢弃本条回复")
         return ""
     return text.strip()
+
+
+def _clean_generated_text(text: Optional[str], chat_name: str) -> str:
+    """统一处理模型候选，重写前后都走同一份身份安全检查。"""
+
+    if not text:
+        return ""
+    return _sanitize_salutation(text.strip().strip("「」\"'“”").strip(), chat_name)
+
+
+def _should_rewrite_generic_defer(message: IncomingMessage, text: str) -> bool:
+    """仅对低风险闲聊纠正机械拖延，不替代需要人工确认的谨慎回复。"""
+
+    compact = re.sub(r"\s+", "", text)
+    if (
+        message.batch_size != 1
+        or message.message_type != "text"
+        or len(compact) > 32
+        or _GENERIC_DEFER_REPLY.search(compact) is None
+    ):
+        return False
+    incoming = message.text.casefold()
+    if any(hint in incoming for hint in _HUMAN_CONFIRMATION_HINTS):
+        return False
+    return any(hint in incoming for hint in _CASUAL_MESSAGE_HINTS)
 
 
 class LLMConfigError(RuntimeError):
@@ -80,7 +149,8 @@ class OpenAICompatibleReplyWriter:
             logger.warning("没有配置人设，跳过 AI 生成——空人设只会生成客服腔")
             return None
 
-        chat_key = message.chat_name
+        # TraceMemo 的 chat_id 含稳定 talker，备注改名不会把短期上下文切断。
+        chat_key = message.chat_id.strip() or message.chat_name
         self._memory.remember(chat_key, "them", message.text, message.timestamp)
 
         # 上下文作为真实的多轮对话传入，而不是塞进一个字符串
@@ -123,10 +193,36 @@ class OpenAICompatibleReplyWriter:
         if not text:
             return None
 
-        # 模型偶尔会自带引号，去掉以免发出去很怪
-        text = _sanitize_salutation(text.strip().strip("「」\"'“”").strip(), message.chat_name)
+        text = _clean_generated_text(text, message.chat_name)
         if not text:
             return None
+
+        if _should_rewrite_generic_defer(message, text):
+            logger.info("检测到低风险闲聊的机械拖延回复，要求模型重写一次")
+            revision_messages = [
+                *messages,
+                {"role": "assistant", "content": text},
+                {
+                    "role": "user",
+                    "content": (
+                        "上一句候选过于像机械拖延。当前是普通低风险闲聊，"
+                        "请直接、自然地重新回复，不要使用“忙完再说”“等会儿再说”"
+                        "或“晚点回”这一类空泛拖延句；仍不得编造事实或承诺。"
+                    ),
+                },
+            ]
+            try:
+                rewritten = _clean_generated_text(
+                    self._post(revision_messages, config.llm.max_tokens),
+                    message.chat_name,
+                )
+            except LLMConfigError:
+                raise
+            except Exception as exc:
+                logger.warning("重写机械拖延回复失败，保留首个可用候选：%s", exc)
+                rewritten = ""
+            if rewritten:
+                text = rewritten
 
         # 超长时截断而不是原样发出：宁可短一点，也别一眼假
         limit = persona.max_chars

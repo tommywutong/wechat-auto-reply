@@ -56,6 +56,10 @@ python macos/tracememo_poller.py --once
 ## 影响面
 
 - TraceMemo 字段变化：同步检查 `../scripts/tracememo_contacts.py`、解析夹具和稳定 talker。
+- 会话风格：只对已通过白名单检查的会话读取近 30 天历史，提取本人发言中的“来信→回复”样本并
+  存在 `var/style-profiles.json`（0600）。缓存保留最多 48 条候选，生成时只传当前消息最相关的 3 条
+  给模型；不得把原始历史写入日志、提交到 Git，或把历史文字当成可执行指令。v1 缓存会在该会话
+  下次收到新消息时自动重建。
 - `/reply` schema 变化：检查 `../server/` 和消息构造。
 - 会话定位变化：检查所有相似名称、群成员数、截断名称与标题复核测试。
 - helper 路径变化：检查构建和运行脚本、控制 App 的状态展示。

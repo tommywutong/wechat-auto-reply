@@ -76,6 +76,7 @@ _GROUP_KEYS = ("isChatRoom", "isGroup", "is_group", "group")
 _ALIAS_KEYS = ("remark", "m_nsNickName", "wechatNickname", "nickname", "displayName", "chatName", "name")
 STYLE_HISTORY_DAYS = 30
 STYLE_PROFILE_REFRESH_SECONDS = 86_400
+STYLE_PROFILE_MAX_EXAMPLES = 48
 
 
 class TraceMemoError(RuntimeError):
@@ -929,7 +930,11 @@ class Poller:
         except TraceMemoError as exc:
             logger.info("会话 %s 历史风格读取失败，使用当前窗口：%s", conversation.name, exc)
 
-        profile = build_style_profile(source, signature=self._style_signature)
+        profile = build_style_profile(
+            source,
+            max_examples=STYLE_PROFILE_MAX_EXAMPLES,
+            signature=self._style_signature,
+        )
         if profile.sample_count:
             self._style_profiles.put(conversation.talker, profile)
             logger.info("已更新会话风格画像：%s（%d 条本人样本）", conversation.name, profile.sample_count)
@@ -1078,7 +1083,7 @@ class Poller:
                 logger.info("检测到新消息：会话 %s（连续 %d 条）", message.chat_name, message.batch_size)
                 profile = self._style_for_message(conversation, messages, now)
                 decision = (
-                    self._engine.draft(message, profile.prompt_context())
+                    self._engine.draft(message, profile.prompt_context(message.text))
                     if profile and profile.sample_count
                     else self._engine.draft(message)
                 )

@@ -79,3 +79,25 @@ def test_interval_is_clamped_and_written_securely(tmp_path: Path, monkeypatch) -
     assert app_config._write_interval(1) == 5
     assert interval_file.read_text(encoding="utf-8") == "5\n"
     assert app_config._read_interval() == 5
+
+
+def test_replay_offline_flag_is_stored_outside_yaml(tmp_path: Path, monkeypatch) -> None:
+    replay_file = tmp_path / "var" / "replay-offline"
+    monkeypatch.setattr(app_config, "_replay_offline_path", lambda: replay_file)
+
+    assert app_config._read_replay_offline() is False
+    assert app_config._write_replay_offline(True) is True
+    assert replay_file.read_text(encoding="utf-8") == "1\n"
+    assert app_config._read_replay_offline() is True
+    assert app_config._write_replay_offline(False) is False
+    assert app_config._read_replay_offline() is False
+
+
+def test_public_settings_expose_replay_offline_flag(tmp_path: Path, monkeypatch) -> None:
+    replay_file = tmp_path / "var" / "replay-offline"
+    monkeypatch.setattr(app_config, "_replay_offline_path", lambda: replay_file)
+    app_config._write_replay_offline(True)
+
+    result = app_config._public_settings({})
+
+    assert result["replayOfflineOnStart"] is True

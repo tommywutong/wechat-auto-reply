@@ -33,12 +33,30 @@ def _interval_path() -> Path:
     return path if path.is_absolute() else _repo_dir() / path
 
 
+def _replay_offline_path() -> Path:
+    value = os.environ.get("WXAUTO_REPLAY_OFFLINE_FILE", "").strip()
+    path = Path(value) if value else _repo_dir() / "var" / "replay-offline"
+    return path if path.is_absolute() else _repo_dir() / path
+
+
 def _read_interval() -> int:
     try:
         value = int(_interval_path().read_text(encoding="utf-8").strip())
     except (FileNotFoundError, ValueError, OSError):
         return 5
     return max(5, min(value, 300))
+
+
+def _read_replay_offline() -> bool:
+    try:
+        return _replay_offline_path().read_text(encoding="utf-8").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+    except (FileNotFoundError, OSError):
+        return False
 
 
 def _write_interval(value: Any) -> int:
@@ -48,6 +66,18 @@ def _write_interval(value: Any) -> int:
     path.write_text(f"{interval}\n", encoding="utf-8")
     os.chmod(path, 0o600)
     return interval
+
+
+def _write_replay_offline(value: Any) -> bool:
+    if isinstance(value, str):
+        enabled = value.strip().lower() in {"1", "true", "yes", "on"}
+    else:
+        enabled = bool(value)
+    path = _replay_offline_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("1\n" if enabled else "0\n", encoding="utf-8")
+    os.chmod(path, 0o600)
+    return enabled
 
 
 def _load() -> dict[str, Any]:
@@ -99,6 +129,7 @@ def _public_settings(data: dict[str, Any]) -> dict[str, Any]:
         "blockKeywords": _as_string_list(scope.get("block_keywords")),
         "activeHours": [str(item).strip() for item in (data.get("active_hours") or []) if str(item).strip()],
         "pollInterval": _read_interval(),
+        "replayOfflineOnStart": _read_replay_offline(),
         "provider": str(llm.get("provider", "deepseek")),
         "model": str(llm.get("model", "deepseek-chat")),
         "maxTokens": int(llm.get("max_tokens", 300)),
@@ -217,9 +248,12 @@ def main() -> int:
         if not isinstance(patch, dict):
             raise ValueError("设置补丁必须是对象")
         interval = patch.pop("pollInterval", None)
+        replay_offline = patch.pop("replayOfflineOnStart", None)
         _apply(data, patch)
         if interval is not None:
             _write_interval(interval)
+        if replay_offline is not None:
+            _write_replay_offline(replay_offline)
         _write(data)
         print(json.dumps(_public_settings(data), ensure_ascii=False))
         return 0

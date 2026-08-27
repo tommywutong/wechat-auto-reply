@@ -524,8 +524,10 @@ class PollState:
         if not entries:
             self.retry_state.pop(talker, None)
 
-    def save(self, now: float) -> None:
-        self.last_polled_at = now
+    def save(self, now: float | None = None) -> None:
+        """持久化状态；传入 now 时推进轮询游标，否则只保存已认领消息。"""
+        if now is not None:
+            self.last_polled_at = now
         self._path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "last_polled_at": self.last_polled_at,
@@ -776,6 +778,7 @@ class Poller:
         style_signature: str = "",
         media_recognizer: MediaRecognizer | None = None,
         merge_window_seconds: float = 8.0,
+        replay_offline: bool = False,
     ) -> None:
         self._trace_memo = trace_memo
         self._engine = engine
@@ -792,6 +795,7 @@ class Poller:
         self._style_profile_attempted_at: dict[str, float] = {}
         self._media_recognizer = media_recognizer or MediaRecognizer()
         self._merge_window_seconds = max(1.0, merge_window_seconds)
+        self._skip_startup_history = not replay_offline
 
     def _new_messages_for_conversation(
         self,
@@ -799,7 +803,7 @@ class Poller:
         previous_poll: float,
         stats: TickStats,
     ) -> list[ChatMessage]:
-        """标记新消息并保留成组前的原始条目，避免重复处理。"""
+        """筛选新消息，消息 ID 在对应批次认领后才写入状态。"""
 
         fresh: list[ChatMessage] = []
         for message in messages:
@@ -807,10 +811,15 @@ class Poller:
                 continue
             if message.timestamp <= previous_poll or self._state.has_seen(message.talker, message.message_id):
                 continue
-            self._state.mark_seen(message.talker, message.message_id)
             stats.new_messages += 1
             fresh.append(self._media_recognizer.enrich(message))
         return fresh
+
+    def _claim_batch(self, messages: list[ChatMessage]) -> None:
+        """先记录本批消息，避免发送过程中重启再次生成同一批回复。"""
+        for message in messages:
+            self._state.mark_seen(message.talker, message.message_id)
+        self._state.save()
 
     def _message_batches(self, messages: list[ChatMessage]) -> list[list[ChatMessage]]:
         """同一人短时间连发的内容为一轮；群聊不同发言人绝不混合。"""
@@ -969,7 +978,9 @@ class Poller:
 
     def tick(self) -> TickStats:
         now = time.time()
-        previous_poll = self._state.last_polled_at
+        # 默认启动时把当前历史视为基线，避免补回停机期间已经被人工读过的消息。
+        # --replay-offline 会保留旧游标，显式开启离线追补。
+        previous_poll = now if self._skip_startup_history else self._state.last_polled_at
         # TraceMemo 对极窄秒级范围的 chatlog 查询可能超时；读取当天窗口后
         # 在本地按游标过滤，既兼容该实现，也不会处理任何历史消息。
         start_time = int(now - 86_400)
@@ -1017,6 +1028,7 @@ class Poller:
 
             fresh = self._new_messages_for_conversation(messages, previous_poll, stats)
             for batch in self._message_batches(fresh):
+                self._claim_batch(batch)
                 message = _combine_messages(batch)
                 logger.info("检测到新消息：会话 %s（连续 %d 条）", message.chat_name, message.batch_size)
                 profile = self._style_for_message(conversation, messages, now)
@@ -1026,7 +1038,10 @@ class Poller:
                     else self._engine.draft(message)
                 )
                 self._process_decision(message, decision, stats)
+                # 批次完成后再次落盘重试记录、草稿对应的认领状态和其他游标信息。
+                self._state.save()
         self._state.save(now)
+        self._skip_startup_history = False
         if stats.new_messages:
             logger.info(
                 "本轮状态：检测到 %d 条新消息，生成 %d 条草稿，发送成功 %d 条，跳过 %d 条，发送失败 %d 条",
@@ -1119,6 +1134,11 @@ def main() -> int:
         default=8.0,
         help="同一会话连续消息的合并判断窗口（秒），默认 8 秒",
     )
+    parser.add_argument(
+        "--replay-offline",
+        action="store_true",
+        help="启动时追补上次停止后积累的历史消息（默认跳过）",
+    )
     parser.add_argument("--status-interval", type=float, default=30, help="无新消息时的状态输出间隔，默认 30 秒")
     parser.add_argument("--once", action="store_true", help="只轮询一轮")
     parser.add_argument("--dump-schema", action="store_true", help="只输出 API 字段名，不输出聊天内容")
@@ -1200,6 +1220,7 @@ def main() -> int:
             style_profiles=StyleProfileStore(Path(args.style_profile_path)),
             style_signature=config.signature,
             merge_window_seconds=args.merge_window,
+            replay_offline=args.replay_offline,
         )
     except (OSError, TraceMemoError) as exc:
         logger.error("无法启动轮询器：%s", exc)
@@ -1215,6 +1236,10 @@ def main() -> int:
             if args.send and args.send_all
             else f"（仅发送 {args.send_name}）" if args.send else ""
         ),
+    )
+    logger.info(
+        "启动历史策略：%s",
+        "追补停机期间消息" if args.replay_offline else "跳过停机期间消息，仅建立当前游标",
     )
     last_status_at = 0.0
     try:

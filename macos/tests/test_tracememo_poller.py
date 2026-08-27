@@ -200,6 +200,7 @@ def test_poller_batches_continuous_messages_for_one_engine_decision(tmp_path: Pa
         {"biscoffee"},
         state,
         poller.DraftWriter(tmp_path / "drafts.jsonl"),
+        replay_offline=True,
     )
     original_time = poller.time.time
     poller.time.time = lambda: now
@@ -230,6 +231,7 @@ def test_poller_splits_messages_outside_merge_window(tmp_path: Path) -> None:
         {"biscoffee"},
         state,
         poller.DraftWriter(tmp_path / "drafts.jsonl"),
+        replay_offline=True,
     )
     original_time = poller.time.time
     poller.time.time = lambda: now + 20
@@ -239,6 +241,75 @@ def test_poller_splits_messages_outside_merge_window(tmp_path: Path) -> None:
         poller.time.time = original_time
 
     assert len(engine.messages) == 2
+
+
+def test_poller_skips_history_on_start_by_default(tmp_path: Path) -> None:
+    now = 1_800_000_000
+    messages = [
+        poller.ChatMessage("old", "biscoffee-id", "Biscoffee", "停机期间的消息", now - 30, "Biscoffee", False, False),
+    ]
+    engine = _CapturingEngine()
+    state = poller.PollState(tmp_path / "state.json")
+    state.ready_talkers.add("biscoffee-id")
+    state.last_polled_at = now - 120
+    instance = poller.Poller(
+        _FakeTraceMemo(messages),
+        engine,
+        {"biscoffee"},
+        state,
+        poller.DraftWriter(tmp_path / "drafts.jsonl"),
+    )
+    original_time = poller.time.time
+    poller.time.time = lambda: now
+    try:
+        stats = instance.tick()
+    finally:
+        poller.time.time = original_time
+
+    assert stats.new_messages == 0
+    assert engine.messages == []
+    assert state.last_polled_at == now
+
+
+def test_poller_replays_history_only_when_enabled(tmp_path: Path) -> None:
+    now = 1_800_000_000
+    messages = [
+        poller.ChatMessage("old", "biscoffee-id", "Biscoffee", "停机期间的消息", now - 30, "Biscoffee", False, False),
+    ]
+    engine = _CapturingEngine()
+    state = poller.PollState(tmp_path / "state.json")
+    state.ready_talkers.add("biscoffee-id")
+    state.last_polled_at = now - 120
+    instance = poller.Poller(
+        _FakeTraceMemo(messages),
+        engine,
+        {"biscoffee"},
+        state,
+        poller.DraftWriter(tmp_path / "drafts.jsonl"),
+        replay_offline=True,
+    )
+    original_time = poller.time.time
+    poller.time.time = lambda: now
+    try:
+        stats = instance.tick()
+    finally:
+        poller.time.time = original_time
+
+    assert stats.new_messages == 1
+    assert len(engine.messages) == 1
+
+
+def test_poll_state_save_without_cursor_advance_persists_claim(tmp_path: Path) -> None:
+    path = tmp_path / "state.json"
+    state = poller.PollState(path)
+    state.last_polled_at = 123.0
+    state.mark_seen("wxid-a", "message-1")
+    state.save()
+
+    loaded = poller.PollState(path)
+
+    assert loaded.last_polled_at == 123.0
+    assert loaded.has_seen("wxid-a", "message-1")
 
 
 class _FakeTraceMemo:
@@ -301,6 +372,7 @@ def test_poller_send_mode_can_be_limited_to_biscoffee(tmp_path: Path) -> None:
         poller.DraftWriter(tmp_path / "drafts.jsonl"),
         sender=sender,
         send_name="Biscoffee",
+        replay_offline=True,
     )
     original_time = poller.time.time
     poller.time.time = lambda: now
@@ -331,6 +403,7 @@ def test_poller_allows_stable_talker_id_when_display_name_changes(tmp_path: Path
         allowed_talkers={"wxid-stable"},
         sender=sender,
         send_name="新备注",
+        replay_offline=True,
     )
     original_time = poller.time.time
     poller.time.time = lambda: now
@@ -361,6 +434,7 @@ def test_poller_send_all_sends_only_allowed_private_messages(tmp_path: Path) -> 
         sender=sender,
         send_name="Biscoffee",
         send_all=True,
+        replay_offline=True,
     )
     original_time = poller.time.time
     poller.time.time = lambda: now
@@ -390,6 +464,7 @@ def test_poller_passes_group_flag_to_sender(tmp_path: Path) -> None:
         poller.DraftWriter(tmp_path / "drafts.jsonl"),
         sender=sender,
         send_name="测试群",
+        replay_offline=True,
     )
     original_time = poller.time.time
     poller.time.time = lambda: now
@@ -419,6 +494,7 @@ def test_poller_retries_only_unattempted_send_failure(tmp_path: Path) -> None:
         poller.DraftWriter(tmp_path / "drafts.jsonl"),
         sender=sender,
         send_name="Biscoffee",
+        replay_offline=True,
     )
     original_time = poller.time.time
     poller.time.time = lambda: now

@@ -85,6 +85,7 @@ struct SafeConfig: Codable, Equatable {
     var blockKeywords: [String] = []
     var activeHours: [String] = []
     var pollInterval = 5
+    var replayOfflineOnStart = false
     var provider = "deepseek"
     var model = "deepseek-chat"
     var maxTokens = 300
@@ -487,7 +488,7 @@ final class AppModel: ObservableObject {
                 }
                 guard verify.status == 0,
                       let data = verify.stdout.data(using: .utf8),
-                      let verified = try? JSONDecoder().decode(SafeConfig.self, from: data) else {
+                      let verified = try? ConfigBridge.decode(data) else {
                     self.operationMessage = "服务已重启，但无法验证配置是否生效。"
                     self.errorMessage = verify.stderr.isEmpty ? "请打开日志检查配置。" : verify.stderr
                     self.refreshStatus()
@@ -517,7 +518,7 @@ final class AppModel: ObservableObject {
             return
         }
         do {
-            config = try JSONDecoder().decode(SafeConfig.self, from: data)
+            config = try ConfigBridge.decode(data)
             persistedConfig = config
         } catch {
             errorMessage = "配置读取失败：\(error.localizedDescription)"
@@ -785,6 +786,19 @@ enum ConfigBridge {
     static func load(repoURL: URL) -> CommandResult {
         let script = repoURL.appendingPathComponent("scripts/app_config.py")
         return CommandRunner.run(python(repoURL: repoURL), [script.path, "get"], cwd: repoURL)
+    }
+
+    static func decode(_ data: Data) throws -> SafeConfig {
+        // Older project checkouts do not expose the new startup replay flag.
+        // Normalize that one optional field before decoding the full settings model.
+        guard var object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw NSError(domain: "TraceMemoAutoReply", code: 1, userInfo: [NSLocalizedDescriptionKey: "设置响应不是对象"])
+        }
+        if object["replayOfflineOnStart"] == nil {
+            object["replayOfflineOnStart"] = false
+        }
+        let normalized = try JSONSerialization.data(withJSONObject: object)
+        return try JSONDecoder().decode(SafeConfig.self, from: normalized)
     }
 
     static func save(_ config: SafeConfig, repoURL: URL) -> CommandResult {
@@ -1314,6 +1328,9 @@ struct SettingsView: View {
                 }
                 IntSettingField(title: "轮询间隔", unit: "秒", value: $model.config.pollInterval)
                 Text("间隔越短，发现新消息越及时；最低 5 秒。")
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle("启动时追补停机消息", isOn: $model.config.replayOfflineOnStart)
+                Text("关闭时，服务启动只建立当前历史游标，不会回复停机期间已经收到的消息。")
                     .font(.caption).foregroundStyle(.secondary)
             }
 

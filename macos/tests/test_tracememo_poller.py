@@ -176,6 +176,54 @@ def test_media_recognizer_adds_ocr_text(monkeypatch, tmp_path: Path) -> None:
     assert enriched.text == "【图片】图片文字：会议改到三点"
 
 
+def test_media_recognizer_keeps_image_as_base64_for_vision(monkeypatch, tmp_path: Path) -> None:
+    recognizer = poller.MediaRecognizer(repo_dir=tmp_path)
+
+    def download(_url, path):
+        path.write_bytes(b"\x89PNG\r\n\x1a\nimage")
+        return True
+
+    monkeypatch.setattr(recognizer, "_download", download)
+    monkeypatch.setattr(recognizer, "_ocr", lambda path: "图片文字")
+    message = poller.ChatMessage(
+        "image-1", "wxid-a", "Loky", "【图片】", 1_700_000_000, "Loky", False, False,
+        message_type="image", media_url="https://example.test/image.png",
+    )
+
+    enriched = recognizer.enrich(message)
+
+    assert enriched.media_mime_type == "image/png"
+    assert enriched.media_data == "iVBORw0KGgppbWFnZQ=="
+
+
+def test_engine_client_sends_media_fields(monkeypatch) -> None:
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"should_reply": False, "reason": "test"}
+
+    captured = {}
+
+    class Session:
+        def post(self, url, **kwargs):
+            captured.update(kwargs)
+            return Response()
+
+    client = poller.EngineClient("http://127.0.0.1:8848", "token")
+    client._session = Session()
+    client.draft(
+        poller.ChatMessage(
+            "m", "wxid-a", "Loky", "【图片】", 1_700_000_000, "Loky", False, False,
+            message_type="image", media_data="abc", media_mime_type="image/png",
+        )
+    )
+
+    assert captured["json"]["media_data"] == "abc"
+    assert captured["json"]["media_mime_type"] == "image/png"
+
+
 class _CapturingEngine:
     def __init__(self) -> None:
         self.messages: list[poller.ChatMessage] = []

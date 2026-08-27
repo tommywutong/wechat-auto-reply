@@ -96,6 +96,11 @@ class LLMSettings:
     effort: str = "low"
     style: str = "用简短口语化的中文回复，不超过 30 个字。"
     persona: str = ""
+    vision_provider: str = "qwen_bailian"
+    vision_model: str = "qwen3-vl-flash"
+    vision_fallback_model: str = "qwen3-vl-plus"
+    vision_base_url: str = ""
+    vision_enabled: bool = True
 
 
 @dataclass
@@ -224,7 +229,16 @@ def build_config(data: dict[str, Any]) -> Config:
         effort=llm_raw.get("effort", "low"),
         style=llm_raw.get("style", LLMSettings.style),
         persona=llm_raw.get("persona", ""),
+        vision_provider=str(llm_raw.get("vision_provider", "qwen_bailian")).strip().lower(),
+        vision_model=str(llm_raw.get("vision_model", "qwen3-vl-flash")).strip(),
+        vision_fallback_model=str(llm_raw.get("vision_fallback_model", "qwen3-vl-plus")).strip(),
+        vision_base_url=str(llm_raw.get("vision_base_url", "")).strip(),
+        vision_enabled=bool(llm_raw.get("vision_enabled", True)),
     )
+    if llm.vision_enabled and llm.vision_provider and llm.vision_provider not in PROVIDERS:
+        raise ConfigError(
+            f"llm.vision_provider 只能是 {describe()}，收到 {llm.vision_provider!r}"
+        )
 
     return Config(
         enabled=bool(data.get("enabled", True)),

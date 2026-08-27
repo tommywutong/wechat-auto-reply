@@ -1,4 +1,4 @@
-"""用 OpenAI 兼容接口生成回复（豆包 / DeepSeek / 通义千问 / 智谱 / Moonshot）。
+"""用 OpenAI 兼容接口生成回复（豆包 / DeepSeek / 通义千问 / 百炼 / 智谱 / Moonshot）。
 
 和 llm.py（Claude）是并列关系，共用同一套人设、上下文和清洗逻辑——
 换模型不该换人设，否则同一个人在两台机器上语气都不一样。
@@ -108,6 +108,10 @@ def _should_rewrite_generic_defer(message: IncomingMessage, text: str) -> bool:
 class LLMConfigError(RuntimeError):
     """key 没配、地址没填这类「用户能自己修」的问题。"""
 
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
 
 def _explain_http(code: int, body: str) -> str:
     """状态码翻译成用户能照着做的话。"""
@@ -134,6 +138,11 @@ class OpenAICompatibleReplyWriter:
         model: str,
         memory: Optional[ConversationMemory] = None,
         timeout: float = 30.0,
+        vision_model: str = "",
+        vision_fallback_model: str = "",
+        vision_base_url: str = "",
+        vision_api_key: str = "",
+        vision_enabled: bool = True,
     ) -> None:
         if not api_key:
             raise LLMConfigError("没有拿到 API Key")
@@ -142,6 +151,11 @@ class OpenAICompatibleReplyWriter:
         self._model = model
         self._memory = memory or ConversationMemory()
         self._timeout = timeout
+        self._vision_model = vision_model.strip()
+        self._vision_fallback_model = vision_fallback_model.strip()
+        self._vision_base_url = vision_base_url.rstrip("/") or self._base_url
+        self._vision_api_key = vision_api_key.strip()
+        self._vision_enabled = vision_enabled
 
     def __call__(self, message: IncomingMessage, config: Config) -> Optional[str]:
         persona = config.persona
@@ -183,7 +197,7 @@ class OpenAICompatibleReplyWriter:
             )
 
         try:
-            text = self._post(messages, config.llm.max_tokens)
+            text = self._generate(message, messages, config.llm.max_tokens)
         except LLMConfigError:
             raise
         except Exception as exc:  # 网络问题等，本条跳过即可
@@ -233,10 +247,55 @@ class OpenAICompatibleReplyWriter:
         self._memory.remember(chat_key, "me", text, message.timestamp)
         return text
 
-    def _post(self, messages: list[dict], max_tokens: int) -> Optional[str]:
+    def _generate(self, message: IncomingMessage, messages: list[dict], max_tokens: int) -> Optional[str]:
+        if message.media_data and self._vision_enabled and self._vision_api_key and self._vision_model:
+            visual_messages = [*messages]
+            visual_messages[-1] = dict(visual_messages[-1])
+            visual_messages[-1]["content"] = [
+                {"type": "text", "text": str(visual_messages[-1]["content"]) +
+                    "\n\n请结合这张图片理解对方要表达的内容，再只输出要发出的微信回复。"},
+                {"type": "image_url", "image_url": {
+                    "url": f"data:{message.media_mime_type or 'image/jpeg'};base64,{message.media_data}"
+                }},
+            ]
+            models = tuple(model for model in dict.fromkeys((self._vision_model, self._vision_fallback_model)) if model)
+            for index, model in enumerate(models):
+                try:
+                    result = self._post(
+                        visual_messages,
+                        max_tokens,
+                        model=model,
+                        base_url=self._vision_base_url,
+                        api_key=self._vision_api_key,
+                    )
+                except LLMConfigError as exc:
+                    # Flash 未授权或已下线时，Plus 仍可能可用；鉴权、余额等
+                    # 账户级问题重试另一模型没有意义，直接让配置错误浮出。
+                    if exc.status_code == 404 and index + 1 < len(models):
+                        logger.warning("视觉模型 %s 不可用，尝试 %s", model, models[index + 1])
+                        continue
+                    raise
+                if result:
+                    if model != self._vision_model:
+                        logger.info("视觉模型 %s 无可用结果，已切换 %s", self._vision_model, model)
+                    return result
+            logger.warning("视觉模型均未返回结果，退回 OCR 文本")
+        elif message.media_data and self._vision_enabled:
+            logger.info("视觉模型凭据未配置，使用本地 OCR 文本")
+        return self._post(messages, max_tokens)
+
+    def _post(
+        self,
+        messages: list[dict],
+        max_tokens: int,
+        *,
+        model: str | None = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
+    ) -> Optional[str]:
         payload = json.dumps(
             {
-                "model": self._model,
+                "model": model or self._model,
                 "messages": messages,
                 "max_tokens": max_tokens,
                 "stream": False,
@@ -245,11 +304,11 @@ class OpenAICompatibleReplyWriter:
         ).encode("utf-8")
 
         request = urllib.request.Request(
-            f"{self._base_url}/chat/completions",
+            f"{(base_url or self._base_url).rstrip('/')}/chat/completions",
             data=payload,
             headers={
                 "Content-Type": "application/json; charset=utf-8",
-                "Authorization": f"Bearer {self._api_key}",
+                "Authorization": f"Bearer {api_key or self._api_key}",
             },
             method="POST",
         )
@@ -262,7 +321,7 @@ class OpenAICompatibleReplyWriter:
             reason = _explain_http(exc.code, detail)
             # key 和模型名这类填错了的，报到日志顶层——用户不改就一直不回
             if exc.code in (401, 402, 403, 404):
-                raise LLMConfigError(reason) from exc
+                raise LLMConfigError(reason, status_code=exc.code) from exc
             logger.warning("%s", reason)
             return None
 
@@ -283,6 +342,11 @@ def build_writer(config: Config) -> object:
         raise LLMConfigError(f"未知的 llm.provider: {provider_id!r}")
 
     provider = PROVIDERS[provider_id]
+    keychain_service = (
+        "com.wxauto.qwen-api-key"
+        if provider_id == "qwen_bailian"
+        else f"com.wxauto.{provider_id}-api-key"
+    )
 
     # 优先用通用变量，方便一台机器上换着试；再退到这家自己的惯用变量
     api_key = (
@@ -291,7 +355,7 @@ def build_writer(config: Config) -> object:
         or os.environ.get(provider.api_key_env, "")
         or read_secret(
             provider.api_key_env,
-            f"com.wxauto.{provider_id}-api-key",
+            keychain_service,
         )
     )
     if not api_key:
@@ -300,8 +364,24 @@ def build_writer(config: Config) -> object:
             f"设一下环境变量：export {provider.api_key_env}=你的key"
         )
 
+    vision_provider = PROVIDERS.get(config.llm.vision_provider)
+    vision_api_key = ""
+    vision_base_url = config.llm.vision_base_url
+    if vision_provider is not None:
+        vision_api_key = (
+            os.environ.get("QWEN_API_KEY", "")
+            or os.environ.get(vision_provider.api_key_env, "")
+            or read_secret(vision_provider.api_key_env, "com.wxauto.qwen-api-key")
+        )
+        vision_base_url = vision_base_url or vision_provider.base_url
+
     return OpenAICompatibleReplyWriter(
         base_url=config.llm.base_url or provider.base_url,
         api_key=api_key,
         model=config.llm.model or provider.model,
+        vision_model=config.llm.vision_model,
+        vision_fallback_model=config.llm.vision_fallback_model,
+        vision_base_url=vision_base_url,
+        vision_api_key=vision_api_key,
+        vision_enabled=config.llm.vision_enabled,
     )

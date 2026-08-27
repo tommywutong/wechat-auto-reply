@@ -38,6 +38,7 @@ llm:
   #   doubao     豆包（火山方舟）  key 从 ARK_API_KEY 读
   #   deepseek   DeepSeek         DEEPSEEK_API_KEY
   #   qwen       通义千问          DASHSCOPE_API_KEY
+  #   qwen_bailian 通义千问（百炼业务空间） QWEN_API_KEY
   #   zhipu      智谱 GLM         ZHIPU_API_KEY
   #   moonshot   Moonshot         MOONSHOT_API_KEY
   #   anthropic  Claude           ANTHROPIC_API_KEY（国内不好注册）
@@ -51,6 +52,14 @@ llm:
   max_tokens: 300
   # effort 只对 Claude 有效
   effort: low            # 自动回复要低延迟，不需要深度推理
+
+  # 图片/表情包会使用视觉模型；普通文字仍走上面的文字模型。
+  vision_enabled: true
+  vision_provider: qwen_bailian
+  vision_model: qwen3-vl-flash
+  vision_fallback_model: qwen3-vl-plus
+  # 百炼业务空间的 OpenAI 兼容地址；留空使用服务商默认地址。
+  vision_base_url: ""
 
 # ============================================================
 # 人设 —— 这一段决定了回复像不像你本人

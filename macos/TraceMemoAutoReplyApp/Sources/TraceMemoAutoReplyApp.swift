@@ -126,6 +126,11 @@ struct SafeConfig: Codable, Equatable {
     var replayOfflineOnStart = false
     var provider = "deepseek"
     var model = "deepseek-chat"
+    var visionProvider = "qwen_bailian"
+    var visionModel = "qwen3-vl-flash"
+    var visionFallbackModel = "qwen3-vl-plus"
+    var visionBaseUrl = ""
+    var visionEnabled = true
     var maxTokens = 300
     var maxChars = 80
     var personaIdentity = ""
@@ -379,6 +384,7 @@ final class AppModel: ObservableObject {
     @Published var traceMemoHealthy = false
     @Published var traceMemoKeychain = false
     @Published var deepSeekKeychain = false
+    @Published var qwenKeychain = false
     @Published var config = SafeConfig()
     @Published private(set) var persistedConfig = SafeConfig()
     @Published var sessions: [TraceMemoSession] = []
@@ -422,6 +428,10 @@ final class AppModel: ObservableObject {
     var autoReplyState: ServiceState { serviceBundleState.autoreply }
 
     var localServerState: ServiceState { serviceBundleState.engine }
+
+    var credentialsReady: Bool {
+        traceMemoKeychain && deepSeekKeychain && (!config.visionEnabled || qwenKeychain)
+    }
 
     var hasUnsavedChanges: Bool { config != persistedConfig }
 
@@ -468,6 +478,7 @@ final class AppModel: ObservableObject {
         serviceBundleState = ServiceController.bundleStatus()
         traceMemoKeychain = ServiceController.keychainExists(service: "com.wxauto.tracememo-api-token")
         deepSeekKeychain = ServiceController.keychainExists(service: "com.wxauto.deepseek-api-key")
+        qwenKeychain = ServiceController.keychainExists(service: "com.wxauto.qwen-api-key")
         Task { [weak self] in
             let healthy = await HealthCheck.traceMemo()
             await MainActor.run {
@@ -979,6 +990,11 @@ enum ConfigBridge {
         if object["replayOfflineOnStart"] == nil {
             object["replayOfflineOnStart"] = false
         }
+        if object["visionProvider"] == nil { object["visionProvider"] = "qwen_bailian" }
+        if object["visionModel"] == nil { object["visionModel"] = "qwen3-vl-flash" }
+        if object["visionFallbackModel"] == nil { object["visionFallbackModel"] = "qwen3-vl-plus" }
+        if object["visionBaseUrl"] == nil { object["visionBaseUrl"] = "" }
+        if object["visionEnabled"] == nil { object["visionEnabled"] = true }
         let normalized = try JSONSerialization.data(withJSONObject: object)
         return try JSONDecoder().decode(SafeConfig.self, from: normalized)
     }
@@ -1130,7 +1146,7 @@ struct OverviewView: View {
                         Divider()
                         StatusLine(title: "规则服务", detail: "本机 API · 127.0.0.1:8848", state: model.localServerState, symbol: "server.rack")
                         Divider()
-                        StatusLine(title: "凭据", detail: "macOS Keychain（不会在 App 中显示）", state: model.traceMemoKeychain && model.deepSeekKeychain, symbol: "key.fill")
+                        StatusLine(title: "凭据", detail: "macOS Keychain（不会在 App 中显示）", state: model.credentialsReady, symbol: "key.fill")
                     }
                 }
                 .padding(16)
@@ -1564,11 +1580,20 @@ struct SettingsView: View {
 
             PersonaExamplesEditor(examples: $model.config.personaExamples)
 
-            Section("DeepSeek") {
+            Section("文字模型") {
                 LabeledContent("服务商", value: model.config.provider)
                 TextField("模型", text: $model.config.model)
                 IntSettingField(title: "最大输出", unit: "tokens", value: $model.config.maxTokens)
                 Text("API Key 只从 macOS Keychain 读取，App 不显示也不保存密钥。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("图片理解（百炼）") {
+                Toggle("启用图片理解", isOn: $model.config.visionEnabled)
+                TextField("视觉模型", text: $model.config.visionModel)
+                TextField("视觉备用模型", text: $model.config.visionFallbackModel)
+                TextField("百炼 OpenAI 兼容地址", text: $model.config.visionBaseUrl)
+                Text("图片和表情包会发送到你配置的百炼业务空间；普通文字仍使用上面的文字模型。")
                     .font(.caption).foregroundStyle(.secondary)
             }
 

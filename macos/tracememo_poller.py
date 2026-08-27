@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 from concurrent.futures import ThreadPoolExecutor
 import dataclasses
 import fcntl
@@ -106,6 +107,8 @@ class ChatMessage:
     media_url: str = ""
     media_id: str = ""
     ocr_text: str = ""
+    media_data: str = ""
+    media_mime_type: str = ""
     message_ids: tuple[str, ...] = ()
     batch_size: int = 1
 
@@ -595,6 +598,8 @@ class EngineClient:
                     "text": message.text,
                     "message_type": message.message_type,
                     "ocr_text": message.ocr_text,
+                    "media_data": message.media_data,
+                    "media_mime_type": message.media_mime_type,
                     "batch_size": message.batch_size,
                     "sender_name": message.sender_name,
                     "is_group": message.is_group,
@@ -603,7 +608,6 @@ class EngineClient:
                     "platform": "tracememo",
                     "account": "personal-wechat",
                 },
-                headers=self._headers,
                 timeout=45,
             )
             response.raise_for_status()
@@ -614,7 +618,7 @@ class EngineClient:
 
 
 class MediaRecognizer:
-    """对新收到的图片/表情包做一次本地 OCR，失败时保留明确占位信息。"""
+    """下载媒体做本地 OCR，并为视觉模型保留一次性的 base64 内容。"""
 
     def __init__(
         self,
@@ -682,21 +686,57 @@ class MediaRecognizer:
             logger.debug("媒体 OCR 失败", exc_info=True)
             return ""
 
+    @staticmethod
+    def _mime_type(path: Path, data: bytes) -> str:
+        """按文件头识别常见图片格式，避免把二进制扩展名猜错。"""
+
+        if data.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "image/png"
+        if data.startswith(b"\xff\xd8\xff"):
+            return "image/jpeg"
+        if data.startswith((b"GIF87a", b"GIF89a")):
+            return "image/gif"
+        if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+            return "image/webp"
+        return {
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".gif": "image/gif",
+            ".webp": "image/webp",
+        }.get(path.suffix.lower(), "image/jpeg")
+
     def enrich(self, message: ChatMessage) -> ChatMessage:
         if message.message_type not in {"image", "sticker"}:
             return message
         label = "图片" if message.message_type == "image" else "表情包"
         ocr_text = ""
+        media_data = ""
+        media_mime_type = ""
         if message.media_url:
             with tempfile.TemporaryDirectory(prefix="wxauto-media-") as temp_dir:
                 image_path = Path(temp_dir) / "media.bin"
                 if self._download(message.media_url, image_path):
                     ocr_text = self._ocr(image_path)
+                    try:
+                        raw = image_path.read_bytes()
+                    except OSError:
+                        raw = b""
+                    if raw and len(raw) <= self._max_bytes:
+                        media_data = base64.b64encode(raw).decode("ascii")
+                        media_mime_type = self._mime_type(image_path, raw)
         if ocr_text:
             text = f"【{label}】图片文字：{ocr_text}"
         else:
             text = f"【{label}】（暂未识别到图片中的文字）"
-        return dataclasses.replace(message, text=text, ocr_text=ocr_text, media_url="")
+        return dataclasses.replace(
+            message,
+            text=text,
+            ocr_text=ocr_text,
+            media_url="",
+            media_data=media_data,
+            media_mime_type=media_mime_type,
+        )
 
 
 class DraftWriter:
@@ -757,6 +797,10 @@ def _combine_messages(messages: list[ChatMessage]) -> ChatMessage:
         ),
         message_type="batch",
         ocr_text="\n".join(message.ocr_text for message in messages if message.ocr_text),
+        media_data=next((message.media_data for message in messages if message.media_data), ""),
+        media_mime_type=next(
+            (message.media_mime_type for message in messages if message.media_data), ""
+        ),
         message_ids=tuple(message.message_id for message in messages),
         batch_size=len(messages),
     )

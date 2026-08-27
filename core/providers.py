@@ -54,6 +54,14 @@ PROVIDERS: dict[str, Provider] = {
             api_key_env="DASHSCOPE_API_KEY",
         ),
         Provider(
+            id="qwen_bailian",
+            name="通义千问（百炼业务空间）",
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            model="qwen3-vl-flash",
+            api_key_env="QWEN_API_KEY",
+            note="可填百炼业务空间的 OpenAI 兼容地址；Key 从 QWEN_API_KEY 或 com.wxauto.qwen-api-key 读取。",
+        ),
+        Provider(
             id="zhipu",
             name="智谱 GLM",
             base_url="https://open.bigmodel.cn/api/paas/v4",

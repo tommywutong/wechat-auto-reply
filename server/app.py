@@ -80,6 +80,8 @@ class MessageIn(BaseModel):
     text: str
     message_type: str = "text"
     ocr_text: str = ""
+    media_data: str = Field(default="", max_length=12_000_000)
+    media_mime_type: str = ""
     batch_size: int = Field(default=1, ge=1, le=8)
     sender_name: str = ""
     is_group: bool = False

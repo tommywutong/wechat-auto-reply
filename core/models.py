@@ -68,10 +68,18 @@ class IncomingMessage:
     batch_size: int = 1
     """本次请求由几条连续入站消息组成。"""
 
+    media_data: str = ""
+    """可选的 base64 图片数据；只在视觉模型请求中使用，不落盘。"""
+
+    media_mime_type: str = ""
+    """图片 MIME 类型，例如 image/jpeg。"""
+
     def __post_init__(self) -> None:
         self.text = (self.text or "").strip()
         self.message_type = (self.message_type or "text").strip().lower() or "text"
         self.ocr_text = (self.ocr_text or "").strip()
+        self.media_data = (self.media_data or "").strip()
+        self.media_mime_type = (self.media_mime_type or "").strip().lower()
         self.batch_size = max(1, int(self.batch_size or 1))
         if not self.sender_name:
             self.sender_name = self.chat_name

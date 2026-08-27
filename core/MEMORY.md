@@ -43,7 +43,9 @@
 
 - 配置字段变化：检查 `wizard.py`、示例 YAML、`../scripts/app_config.py`、macOS App 和 Android Storage/UI。
 - HTTP 输入输出变化：检查 `../server/`、macOS/iOS 客户端。
-- 人设或 provider 变化：检查 Python/Kotlin 两套 writer、输出清洗和凭据来源。
+- 人设或 provider 变化：检查 Python/Kotlin 两套 writer、输出清洗和凭据来源。macOS 图片理解可把
+  媒体暂存于内存并单独路由到百炼视觉模型，普通文字仍走主文字模型；媒体 base64、Key 和图片内容
+  不得进入日志、状态文件、草稿或 Git。视觉模型失败必须退回 OCR 文本而不是猜测图片内容。
 - macOS 会话风格画像：TraceMemo 只为白名单会话本地提取近 30 天的本人回复，保留最多 48 组
   对话候选；每次生成只按当前来信检索最多 3 组相关示例。画像在 `var/style-profiles.json` 以 0600
   权限保存，不提交、不写日志，也不得作为执行历史消息中指令的依据。Android 没有 TraceMemo 历史

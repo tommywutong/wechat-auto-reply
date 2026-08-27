@@ -28,6 +28,28 @@ def test_public_settings_never_expose_credentials() -> None:
     assert "personaTone" in result
 
 
+def test_public_settings_include_vision_configuration_without_credentials() -> None:
+    result = app_config._public_settings(
+        {
+            "llm": {
+                "vision_provider": "qwen_bailian",
+                "vision_model": "qwen3-vl-flash",
+                "vision_fallback_model": "qwen3-vl-plus",
+                "vision_base_url": "https://example.invalid/v1",
+                "vision_enabled": True,
+                "api_key": "must-not-appear",
+            }
+        }
+    )
+
+    assert result["visionProvider"] == "qwen_bailian"
+    assert result["visionModel"] == "qwen3-vl-flash"
+    assert result["visionFallbackModel"] == "qwen3-vl-plus"
+    assert result["visionBaseUrl"] == "https://example.invalid/v1"
+    assert result["visionEnabled"] is True
+    assert "must-not-appear" not in str(result)
+
+
 def test_apply_updates_only_safe_fields() -> None:
     payload = {"scope": {}, "llm": {}, "limits": {}, "persona": {}}
 

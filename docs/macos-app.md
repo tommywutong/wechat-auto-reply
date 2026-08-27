@@ -27,6 +27,7 @@ App 首次打开时，在左侧底部选择项目目录。默认会自动发现�
 - 用会话开关管理私信/群聊白名单；保留旧名称配置并自动迁移到稳定 ID
 - 私信/群聊白名单与 `@` 策略编辑
 - 轮询间隔、模型名称、输出限制和全局限流设置
+- 启动时是否追补停机期间积累的历史消息
 - 自动刷新 stdout/stderr 日志，支持复制日志文本
 - 日志页默认自动跟随最新一行，也可以关闭跟随以查看历史内容
 - 设置页支持活动时段、回复风格、单会话冷却、全局限流、随机等待和打字速度
@@ -35,7 +36,9 @@ App 首次打开时，在左侧底部选择项目目录。默认会自动发现�
 ID，`scope.allow_contacts` 作为旧配置兼容和显示名称备份；轮询间隔保存到
 `var/poll-interval`。保存设置后 App 会同时重启 `com.wxauto.server` 规则服务和
 `com.wxauto.tracememo-autoreply` 自动回复服务，确保人设、模型、回复模式以及
-轮询/限流设置都从最新配置加载。API Token 仍只从 macOS Keychain 读取，App 不会显示或写入 Token。
+轮询/限流设置都从最新配置加载。启动时追补开关保存到 `var/replay-offline`；默认关闭，
+服务启动只建立当前历史游标，不会回复停机期间已收到的消息。API Token 仍只从 macOS
+Keychain 读取，App 不会显示或写入 Token。
 概览页的启动、停止和重启按钮也会同时管理这两个服务。
 
 首次进入会话管理页时，App 通过 `scripts/tracememo_contacts.py` 调用本机 TraceMemo

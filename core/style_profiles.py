@@ -38,6 +38,13 @@ _COMMON_MARKERS = (
     "呗",
     "xdm",
 )
+_GENERIC_DEFER_REPLY = re.compile(
+    r"(?:忙完|等会(?:儿)?|一会(?:儿)?|晚点|回头).{0,8}(?:再说|回(?:你)?|聊|看)"
+    r"|(?:等我).{0,8}(?:回(?:你)?|回复|再说)",
+    re.IGNORECASE,
+)
+_ASCII_WORD = re.compile(r"[a-z0-9_]{2,}", re.IGNORECASE)
+_CJK_RUN = re.compile(r"[\u4e00-\u9fff]{2,}")
 
 
 def _clean_text(value: str, signature: str = "") -> str:
@@ -60,6 +67,24 @@ def _is_emoji(char: str) -> bool:
     )
 
 
+def _is_generic_defer_reply(value: str) -> bool:
+    """过滤低信息拖延句，避免旧自动回复反复成为新示例。"""
+
+    compact = re.sub(r"\s+", "", str(value or ""))
+    return len(compact) <= 32 and _GENERIC_DEFER_REPLY.search(compact) is not None
+
+
+def _query_tokens(value: str) -> set[str]:
+    """用零依赖的中英文词片和中文双字片做本地会话示例检索。"""
+
+    normalized = " ".join(str(value or "").casefold().split())
+    tokens = set(_ASCII_WORD.findall(normalized))
+    for run in _CJK_RUN.findall(normalized):
+        tokens.add(run)
+        tokens.update(run[index : index + 2] for index in range(len(run) - 1))
+    return tokens
+
+
 @dataclass(frozen=True)
 class StyleExample:
     incoming: str = ""
@@ -73,13 +98,38 @@ class StyleProfile:
     sample_count: int
     updated_at: float
 
-    def prompt_context(self) -> str:
+    def examples_for(self, incoming: str, *, max_examples: int = 3) -> tuple[StyleExample, ...]:
+        """优先取与当前来信相近的本人历史对话；没有命中才回退到最近样本。"""
+
+        limit = max(1, max_examples)
+        paired = [example for example in self.examples if example.incoming]
+        query_tokens = _query_tokens(incoming)
+        scored: list[tuple[int, int, StyleExample]] = []
+        for index, example in enumerate(paired):
+            incoming_text = _clip(example.incoming).casefold()
+            example_tokens = _query_tokens(incoming_text)
+            overlap = len(query_tokens & example_tokens)
+            if query_tokens and incoming_text and (
+                incoming_text in incoming.casefold() or incoming.casefold() in incoming_text
+            ):
+                overlap += 4
+            if overlap:
+                scored.append((overlap, -index, example))
+        if scored:
+            # Explicitly sort only the numeric ranking fields; StyleExample is
+            # intentionally a value object without an ordering implementation.
+            ranked = sorted(scored, key=lambda item: (item[0], item[1]), reverse=True)
+            return tuple(item[2] for item in ranked[:limit])
+        return tuple(self.examples[:limit])
+
+    def prompt_context(self, incoming: str = "") -> str:
         """生成短小、带边界说明的提示片段。"""
 
         lines = [f"统计：{self.summary}"]
-        if self.examples:
-            lines.append("历史示例（只模仿表达方式）：")
-            for example in self.examples:
+        examples = self.examples_for(incoming)
+        if examples:
+            lines.append("与当前来信最接近的历史示例（只模仿口吻和处理方式）：")
+            for example in examples:
                 if example.incoming:
                     lines.append(f"对方：{_clip(example.incoming)}")
                 lines.append(f"我：{_clip(example.reply)}")
@@ -89,7 +139,7 @@ class StyleProfile:
 def build_style_profile(
     messages: Iterable[object],
     *,
-    max_examples: int = 6,
+    max_examples: int = 48,
     signature: str = "",
 ) -> StyleProfile:
     """从一段 TraceMemo 消息中提取当前账号的发言风格。"""
@@ -151,10 +201,12 @@ def build_style_profile(
         f"表情字符约{emoji_count}个"
     )
 
-    # 优先选最近、内容不重复的成对示例；没有入站配对时退化为本人单句样本。
+    # 优先保留较丰富的真实对话对，生成时再按当前来信取最相关的少量示例。
+    # 过去由自动回复留下的纯拖延句不会进入画像；它们没有可复用的信息。
     examples: list[StyleExample] = []
     seen_replies: set[str] = set()
-    for example in reversed(pairs):
+    preferred_pairs = [example for example in pairs if not _is_generic_defer_reply(example.reply)]
+    for example in reversed(preferred_pairs):
         key = example.reply.casefold()
         if key in seen_replies:
             continue
@@ -168,7 +220,8 @@ def build_style_profile(
         if len(examples) >= max_examples:
             break
     if not examples:
-        for _, text in reversed(outgoing):
+        preferred_outgoing = [item for item in outgoing if not _is_generic_defer_reply(item[1])]
+        for _, text in reversed(preferred_outgoing):
             key = text.casefold()
             if key in seen_replies:
                 continue
@@ -198,6 +251,7 @@ class StyleProfileStore:
             payload = json.loads(self._path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return
+        legacy_profile = int(payload.get("version", 1) or 1) < 2
         for talker, raw in (payload.get("profiles") or {}).items():
             if not isinstance(raw, dict):
                 continue
@@ -213,7 +267,9 @@ class StyleProfileStore:
                 summary=str(raw.get("summary", "")),
                 examples=examples,
                 sample_count=int(raw.get("sample_count", 0)),
-                updated_at=float(raw.get("updated_at", 0)),
+                # v1 只保留 6 条最新样本，无法进行当前消息的相关性检索；
+                # 下次该白名单会话有新消息时自动从 TraceMemo 重建完整本地画像。
+                updated_at=0 if legacy_profile else float(raw.get("updated_at", 0)),
             )
 
     def get(self, talker: str) -> StyleProfile | None:
@@ -226,7 +282,7 @@ class StyleProfileStore:
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
-            "version": 1,
+            "version": 2,
             "profiles": {
                 talker: {
                     "summary": profile.summary,

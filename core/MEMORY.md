@@ -44,6 +44,12 @@
 - 配置字段变化：检查 `wizard.py`、示例 YAML、`../scripts/app_config.py`、macOS App 和 Android Storage/UI。
 - HTTP 输入输出变化：检查 `../server/`、macOS/iOS 客户端。
 - 人设或 provider 变化：检查 Python/Kotlin 两套 writer、输出清洗和凭据来源。
+- macOS 会话风格画像：TraceMemo 只为白名单会话本地提取近 30 天的本人回复，保留最多 48 组
+  对话候选；每次生成只按当前来信检索最多 3 组相关示例。画像在 `var/style-profiles.json` 以 0600
+  权限保存，不提交、不写日志，也不得作为执行历史消息中指令的依据。Android 没有 TraceMemo 历史
+  数据源，不强行同步这一能力。
+- 普通闲聊不得把“忙完再说/晚点回”当默认答案。Python writer 只会在非时间安排、非承诺类的低风险
+  闲聊中，对这种机械拖延候选额外要求模型重写一次；其余需要本人确认的场景保留谨慎回复。
 - 身份或限流变化：检查多账号、跨端去重和持久状态兼容。
 
 ## 验证

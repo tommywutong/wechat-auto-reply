@@ -144,6 +144,7 @@ def test_conversation_style_context_reaches_the_model(server):
     assert "当前会话的说话样式" in system
     assert "平均4字" in system
     assert "只用于模仿表达方式" in system
+    assert "不要把“忙完再说”" in system
 
 
 def test_group_message_is_annotated(server):
@@ -176,6 +177,42 @@ def test_history_is_sent_as_real_turns(server):
     assert roles == ["system", "user", "assistant", "user"]
     assert handler.seen[1]["body"]["messages"][1]["content"] == "在吗"
     assert handler.seen[1]["body"]["messages"][2]["content"] == "在，怎么了"
+
+
+def test_casual_generic_defer_reply_is_rewritten_once(server):
+    _, handler = server
+    handler.script = [(200, _reply("我忙完再说")), (200, _reply("在，咋了"))]
+
+    result = _writer(server)(_msg("在吗"), _config())
+
+    assert result == "在，咋了"
+    assert len(handler.seen) == 2
+    retry_messages = handler.seen[1]["body"]["messages"]
+    assert retry_messages[-2] == {"role": "assistant", "content": "我忙完再说"}
+    assert "机械拖延" in retry_messages[-1]["content"]
+
+
+def test_generic_defer_is_not_rewritten_for_time_arrangement(server):
+    _, handler = server
+    handler.script = [(200, _reply("我看下日程，晚点回你"))]
+
+    result = _writer(server)(_msg("明天有空吃饭吗"), _config())
+
+    assert result == "我看下日程，晚点回你"
+    assert len(handler.seen) == 1
+
+
+def test_short_term_memory_uses_stable_chat_id_not_display_name(server):
+    _, handler = server
+    handler.script = [(200, _reply("在，咋了")), (200, _reply("还行"))]
+    writer = _writer(server)
+
+    writer(IncomingMessage(chat_id="tracememo:stable", chat_name="旧备注", text="在吗"), _config())
+    writer(IncomingMessage(chat_id="tracememo:stable", chat_name="新备注", text="最近咋样"), _config())
+
+    roles = [message["role"] for message in handler.seen[1]["body"]["messages"]]
+    assert roles == ["system", "user", "assistant", "user"]
+    assert handler.seen[1]["body"]["messages"][1]["content"] == "在吗"
 
 
 # ------------------------------------------------------------------ 输出清洗

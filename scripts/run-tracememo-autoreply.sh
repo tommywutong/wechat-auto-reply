@@ -39,14 +39,9 @@ else
 fi
 if [ "$POLL_INTERVAL" -lt 5 ] 2>/dev/null; then POLL_INTERVAL=5; fi
 if [ "$POLL_INTERVAL" -gt 300 ] 2>/dev/null; then POLL_INTERVAL=300; fi
-REPLAY_ARGS=()
 REPLAY_FILE="$REPO_DIR/var/replay-offline"
+set -- --interval "$POLL_INTERVAL" --send --send-all "$@"
 if [ -s "$REPLAY_FILE" ] && [[ "$(tr '[:upper:]' '[:lower:]' < "$REPLAY_FILE")" =~ ^(1|true|yes|on)$ ]]; then
-  REPLAY_ARGS+=(--replay-offline)
+  set -- --replay-offline "$@"
 fi
-exec "$REPO_DIR/.venv/bin/python" macos/tracememo_poller.py \
-  --interval "$POLL_INTERVAL" \
-  --send \
-  --send-all \
-  "${REPLAY_ARGS[@]}" \
-  "$@"
+exec "$REPO_DIR/.venv/bin/python" macos/tracememo_poller.py "$@"

@@ -214,7 +214,7 @@ echo "  你答过的问题和生成的回复内容不会丢"
 echo "=========================================================="
 echo
 
-ZIP_URL="https://github.com/taotao-river/wechat-auto-reply/archive/refs/heads/main.zip"
+ZIP_URL="https://github.com/tommywutong/wechat-auto-reply/archive/refs/heads/main.zip"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 

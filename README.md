@@ -8,9 +8,10 @@
 在 macOS 上构建并打开：
 
 ```bash
-bash scripts/build-macos-app.sh
-open "dist/TraceMemo 自动回复.app"
+bash scripts/run-macos-app.sh
 ```
+
+控制 App 每次启动或再次点击 Dock 图标时会检查远端 `main`：本地工作区干净且能安全快进时，自动拉取代码、重建 App 并切换到新版本。检测到本地未提交修改、分支分叉或网络异常时会跳过更新，保留现有版本和本机配置。自动更新不会强行重启正在运行的后台服务；需要让服务加载新代码时，在概览里点击一次“重启服务”。关闭窗口后点击 Dock 图标会重新显示控制面板，无需先退出进程。
 
 详细说明见 [docs/macos-app.md](docs/macos-app.md)。
 
@@ -202,8 +203,7 @@ security find-generic-password -a "$USER" -s com.wxauto.deepseek-api-key >/dev/n
 #### 4. 构建并打开 macOS 控制 App
 
 ```bash
-bash scripts/build-macos-app.sh
-open "dist/TraceMemo 自动回复.app"
+bash scripts/run-macos-app.sh
 ```
 
 首次打开后，在窗口底部选择刚刚克隆的项目目录。控制 App 会读取 TraceMemo 的联系人和群聊，

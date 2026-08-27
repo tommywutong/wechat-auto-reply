@@ -1741,6 +1741,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static weak var shared: AppDelegate?
     let model = AppModel()
     private var mainWindow: NSWindow?
+    private var updateCheckInFlight = false
 
     override init() {
         super.init()
@@ -1751,11 +1752,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         DispatchQueue.main.async { [weak self] in
             self?.showMainWindow()
+            self?.checkForUpdates()
         }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showMainWindow()
+        checkForUpdates()
+        return true
     }
 
     func showMainWindow() {
         if let mainWindow {
+            if mainWindow.isMiniaturized {
+                mainWindow.deminiaturize(nil)
+            }
             mainWindow.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
@@ -1777,6 +1788,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         window.orderFrontRegardless()
         window.makeKey()
+    }
+
+    private func checkForUpdates() {
+        guard !updateCheckInFlight else { return }
+        guard let repoURL = model.repoURL else { return }
+        let script = repoURL.appendingPathComponent("scripts/update-macos-app.sh")
+        guard FileManager.default.isExecutableFile(atPath: script.path) else { return }
+        updateCheckInFlight = true
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let result = CommandRunner.run(
+                "/bin/bash",
+                [script.path],
+                cwd: repoURL,
+                timeout: 180
+            )
+            let updated = result.stdout.contains("UPDATE_RESULT=updated")
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.updateCheckInFlight = false
+                if updated {
+                    let launch = CommandRunner.run(
+                        "/usr/bin/open",
+                        ["-n", Bundle.main.bundlePath],
+                        timeout: 20
+                    )
+                    if launch.status == 0 {
+                        NSApp.terminate(nil)
+                    } else {
+                        self.model.operationMessage = "新版本已准备好，请重新打开控制 App。"
+                    }
+                }
+            }
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

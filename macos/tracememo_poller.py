@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import dataclasses
 import fcntl
 import hashlib
@@ -17,6 +18,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -361,8 +363,16 @@ class TraceMemoClient:
         if not token:
             raise TraceMemoError("未找到 TraceMemo API Token")
         self._base_url = base_url.rstrip("/")
-        self._session = requests.Session()
-        self._session.headers.update({"Authorization": f"Bearer {token}"})
+        self._token = token
+        self._sessions = threading.local()
+
+    def _session(self) -> requests.Session:
+        session = getattr(self._sessions, "value", None)
+        if session is None:
+            session = requests.Session()
+            session.headers.update({"Authorization": f"Bearer {self._token}"})
+            self._sessions.value = session
+        return session
 
     def health(self) -> dict[str, Any]:
         payload = self._get("/health")
@@ -373,7 +383,7 @@ class TraceMemoClient:
         last_error: requests.RequestException | None = None
         for attempt in range(2):
             try:
-                response = self._session.get(
+                response = self._session().get(
                     f"{self._base_url}{path}",
                     params=params,
                     timeout=request_timeout,
@@ -571,11 +581,12 @@ class PollerLock:
 class EngineClient:
     def __init__(self, server_url: str, token: str) -> None:
         self._url = server_url.rstrip("/") + "/reply"
-        self._headers = {"Authorization": f"Bearer {token}"}
+        self._session = requests.Session()
+        self._session.headers.update({"Authorization": f"Bearer {token}"})
 
     def draft(self, message: ChatMessage, style_context: str = "") -> Optional[dict[str, Any]]:
         try:
-            response = requests.post(
+            response = self._session.post(
                 self._url,
                 json={
                     "chat_id": f"tracememo:{message.talker}",
@@ -615,6 +626,7 @@ class MediaRecognizer:
         self._ocr_binary = root / ".build" / "vision-ocr"
         self._timeout = timeout
         self._max_bytes = max_bytes
+        self._session = requests.Session()
 
     def _download(self, url: str, path: Path) -> bool:
         if url.startswith("file://") or url.startswith("/"):
@@ -629,7 +641,7 @@ class MediaRecognizer:
         if not url.startswith(("http://", "https://")):
             return False
         try:
-            response = requests.get(url, timeout=self._timeout, stream=True)
+            response = self._session.get(url, timeout=self._timeout, stream=True)
             response.raise_for_status()
             total = 0
             with path.open("wb") as handle:
@@ -779,6 +791,7 @@ class Poller:
         media_recognizer: MediaRecognizer | None = None,
         merge_window_seconds: float = 8.0,
         replay_offline: bool = False,
+        fetch_workers: int = 4,
     ) -> None:
         self._trace_memo = trace_memo
         self._engine = engine
@@ -796,6 +809,7 @@ class Poller:
         self._media_recognizer = media_recognizer or MediaRecognizer()
         self._merge_window_seconds = max(1.0, merge_window_seconds)
         self._skip_startup_history = not replay_offline
+        self._fetch_workers = max(1, min(int(fetch_workers), 8))
 
     def _new_messages_for_conversation(
         self,
@@ -976,6 +990,41 @@ class Poller:
         stats.sent += 1
         logger.info("%s 自动回复已发送", message.chat_name)
 
+    def _fetch_conversation(
+        self,
+        item: tuple[Conversation, int, int],
+    ) -> tuple[Conversation, list[ChatMessage] | None, TraceMemoError | None]:
+        """读取单个会话；只在这里触碰 TraceMemo，便于安全并行获取。"""
+
+        conversation, start_time, end_time = item
+        try:
+            if self._self_nicknames:
+                messages = self._trace_memo.chatlog(
+                    conversation,
+                    start_time,
+                    end_time,
+                    self._self_nicknames,
+                )
+            else:
+                messages = self._trace_memo.chatlog(conversation, start_time, end_time)
+            return conversation, messages, None
+        except TraceMemoError as exc:
+            return conversation, None, exc
+
+    def _fetch_conversations(
+        self,
+        conversations: list[Conversation],
+        start_time: int,
+        end_time: int,
+    ) -> list[tuple[Conversation, list[ChatMessage] | None, TraceMemoError | None]]:
+        """并行读取白名单会话，但按 recent_conversations 原顺序返回结果。"""
+
+        jobs = [(conversation, start_time, end_time) for conversation in conversations]
+        if len(jobs) <= 1 or self._fetch_workers == 1:
+            return [self._fetch_conversation(job) for job in jobs]
+        with ThreadPoolExecutor(max_workers=min(self._fetch_workers, len(jobs))) as pool:
+            return list(pool.map(self._fetch_conversation, jobs))
+
     def tick(self) -> TickStats:
         now = time.time()
         # 默认启动时把当前历史视为基线，避免补回停机期间已经被人工读过的消息。
@@ -985,6 +1034,7 @@ class Poller:
         # 在本地按游标过滤，既兼容该实现，也不会处理任何历史消息。
         start_time = int(now - 86_400)
         stats = TickStats()
+        conversations_to_fetch: list[Conversation] = []
         for conversation in self._trace_memo.recent_conversations():
             if not self._conversation_allowed(conversation):
                 continue
@@ -997,24 +1047,16 @@ class Poller:
                     logger.info("已建立会话游标，跳过启动前历史：%s", conversation.name)
                     continue
                 logger.info("已建立会话游标，按追补策略处理历史：%s", conversation.name)
-            try:
-                if self._self_nicknames:
-                    messages = self._trace_memo.chatlog(
-                        conversation,
-                        start_time,
-                        int(now),
-                        self._self_nicknames,
-                    )
-                else:
-                    messages = self._trace_memo.chatlog(
-                        conversation,
-                        start_time,
-                        int(now),
-                    )
-            except TraceMemoError as exc:
+            conversations_to_fetch.append(conversation)
+
+        fetched = self._fetch_conversations(conversations_to_fetch, start_time, int(now))
+        for conversation, messages, fetch_error in fetched:
+            if fetch_error is not None:
+                exc = fetch_error
                 logger.warning("跳过会话 %s：%s", conversation.name, exc)
                 stats.errors += 1
                 continue
+            assert messages is not None
             # 未完成的安全重试优先执行，但不会影响新消息的分批。
             for message in messages:
                 retry_attempt = self._state.retry_attempts(message.talker, message.message_id)
@@ -1138,6 +1180,12 @@ def main() -> int:
         help="同一会话连续消息的合并判断窗口（秒），默认 8 秒",
     )
     parser.add_argument(
+        "--fetch-workers",
+        type=int,
+        default=4,
+        help="并行读取白名单会话的工作线程数（1-8），默认 4",
+    )
+    parser.add_argument(
         "--replay-offline",
         action="store_true",
         help="启动时追补上次停止后积累的历史消息（默认跳过）",
@@ -1167,6 +1215,8 @@ def main() -> int:
         parser.error("状态输出间隔不得低于 5 秒")
     if args.merge_window < 1:
         parser.error("连续消息合并窗口不得低于 1 秒")
+    if not 1 <= args.fetch_workers <= 8:
+        parser.error("并行读取线程数必须在 1 到 8 之间")
 
     process_lock = PollerLock(Path(args.state_path).with_name("tracememo-poller.lock"))
     if not args.dump_schema and not args.diagnose_name:
@@ -1224,6 +1274,7 @@ def main() -> int:
             style_signature=config.signature,
             merge_window_seconds=args.merge_window,
             replay_offline=args.replay_offline,
+            fetch_workers=args.fetch_workers,
         )
     except (OSError, TraceMemoError) as exc:
         logger.error("无法启动轮询器：%s", exc)
@@ -1245,6 +1296,7 @@ def main() -> int:
         "追补停机期间消息" if args.replay_offline else "跳过停机期间消息，仅建立当前游标",
     )
     last_status_at = 0.0
+    next_tick_at = time.monotonic()
     try:
         while True:
             try:
@@ -1261,7 +1313,14 @@ def main() -> int:
                 logger.error("本轮跳过：%s", exc)
             if args.once:
                 break
-            time.sleep(args.interval)
+            # 以固定节拍安排下一轮，避免本轮 TraceMemo/模型耗时再叠加完整间隔。
+            next_tick_at += args.interval
+            remaining = next_tick_at - time.monotonic()
+            if remaining > 0:
+                time.sleep(remaining)
+            else:
+                # 处理时间超过间隔时跳过积压的节拍，避免忙循环追赶旧时间点。
+                next_tick_at = time.monotonic()
     except KeyboardInterrupt:
         logger.info("收到中断，退出")
     finally:

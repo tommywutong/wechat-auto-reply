@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
+import threading
 
 
 MODULE_PATH = Path(__file__).parents[1] / "tracememo_poller.py"
@@ -213,6 +214,68 @@ def test_poller_batches_continuous_messages_for_one_engine_decision(tmp_path: Pa
     assert len(engine.messages) == 1
     assert engine.messages[0].batch_size == 2
     assert "你在吗" in engine.messages[0].text and "有个问题想问" in engine.messages[0].text
+
+
+def test_poller_fetches_conversations_in_parallel_but_keeps_order(tmp_path: Path) -> None:
+    now = 1_800_000_000
+    conversations = [
+        poller.Conversation("slow", "Slow", False),
+        poller.Conversation("fast", "Fast", False),
+    ]
+    state = poller.PollState(tmp_path / "state.json")
+    engine = _CapturingEngine()
+    instance = poller.Poller(
+        _FakeTraceMemo([]),
+        engine,
+        {"slow", "fast"},
+        state,
+        poller.DraftWriter(tmp_path / "drafts.jsonl"),
+        fetch_workers=2,
+    )
+    started: list[str] = []
+    lock = threading.Lock()
+    barrier = threading.Barrier(2)
+
+    def fetch(item):
+        conversation, _start, _end = item
+        with lock:
+            started.append(conversation.talker)
+        barrier.wait(timeout=1)
+        return conversation, [], None
+
+    instance._fetch_conversation = fetch
+    result = instance._fetch_conversations(conversations, 0, now)
+
+    assert set(started) == {"slow", "fast"}
+    assert [item[0].talker for item in result] == ["slow", "fast"]
+
+
+def test_poller_fetch_failure_isolated_from_other_conversations(tmp_path: Path) -> None:
+    state = poller.PollState(tmp_path / "state.json")
+    instance = poller.Poller(
+        _FakeTraceMemo([]),
+        _CapturingEngine(),
+        {"slow", "fast"},
+        state,
+        poller.DraftWriter(tmp_path / "drafts.jsonl"),
+        fetch_workers=2,
+    )
+    conversations = [
+        poller.Conversation("slow", "Slow", False),
+        poller.Conversation("fast", "Fast", False),
+    ]
+
+    def fetch(item):
+        conversation, _start, _end = item
+        if conversation.talker == "slow":
+            return conversation, None, poller.TraceMemoError("暂时不可用")
+        return conversation, [], None
+
+    instance._fetch_conversation = fetch
+    result = instance._fetch_conversations(conversations, 0, 1)
+
+    assert result[0][2] is not None
+    assert result[1][1] == []
 
 
 def test_poller_splits_messages_outside_merge_window(tmp_path: Path) -> None:

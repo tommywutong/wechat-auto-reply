@@ -971,10 +971,15 @@ class WeChatSender:
         old_clipboard = _clipboard_read()
         previous_frontmost = _frontmost_process()
         try:
-            _open_wechat_app()
-            time.sleep(max(self._settle_seconds, 1.2))
-            _run_osascript(_ACTIVATE_ONLY)
-            time.sleep(self._settle_seconds)
+            # 微信已经有可用主窗口时直接激活，避免每条消息都重复等待
+            # ``open -a`` 的启动稳定时间；窗口不存在时仍走完整启动校验。
+            try:
+                _run_osascript(_ACTIVATE_ONLY, timeout=5)
+            except SenderError:
+                _open_wechat_app()
+                time.sleep(max(self._settle_seconds, 1.2))
+                _run_osascript(_ACTIVATE_ONLY)
+                time.sleep(self._settle_seconds)
             bounds = _window_bounds()
             selected_from_sidebar = self._is_current_target(bounds, target_name)
             if selected_from_sidebar:

@@ -25,6 +25,9 @@
 | `app_config.py` | SwiftUI App 的配置读写桥接 |
 | `termux-setup.sh` | Android/Termux 专项部署路径 |
 
+两个 macOS 运行脚本都读取 `var/poll-interval`（默认 5 秒，范围 5-300 秒），与控制 App 的轮询设置保持一致。
+轮询器内部按固定节拍安排下一轮，处理耗时不会再额外叠加一个完整间隔。
+
 ## 不变量
 
 - 未经明确授权，不运行安装脚本、不写 `~/Library/LaunchAgents`、不操作 Keychain、不启动真实自动回复。

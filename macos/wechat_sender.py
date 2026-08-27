@@ -585,9 +585,10 @@ def _input_region_from_button(button: OCRObservation) -> tuple[float, float, flo
 class WeChatSender:
     """带目标会话确认的微信文字发送器。"""
 
-    # 白名单会话通常位于列表前部；只做有限的小步滚动，避免把用户的
-    # 列表位置大幅改变，也避免在错误会话上长时间操作。
-    _SIDEBAR_SCROLL_DELTAS = (6, 6, 6, 6, 6, -6, -6, -6, -6, -6, -6)
+    # 微信的滚轮事件按“行”计数。旧策略每次只滚 6 行，长列表中很容易
+    # 只覆盖到当前窗口附近；这里使用中等步长并增加反向扫描范围。每一步
+    # 都会重新 OCR，目标出现即停止，右侧标题复核仍是发送前的硬门槛。
+    _SIDEBAR_SCROLL_DELTAS = (10,) * 8 + (-10,) * 16
 
     def __init__(self, *, repo_dir: str | Path | None = None, settle_seconds: float = 0.8) -> None:
         root = Path(repo_dir) if repo_dir else Path(__file__).resolve().parents[1]
@@ -731,8 +732,8 @@ class WeChatSender:
             return False
 
     def _click_sidebar_target(self, bounds: WindowBounds, target_name: str) -> bool:
-        # 首先检查当前可见列表，然后只做几次小步滚动。私信和群聊都走
-        # 这条路径；找到会话后立即停止，不会继续滚动或拖动列表。
+        # 首先检查当前可见列表，然后用较大但仍有重叠的步长扫描。私信和
+        # 群聊都走这条路径；找到会话后立即停止，不会继续滚动或拖动列表。
         previous_fingerprint: tuple[str, ...] | None = None
         unchanged_by_direction: dict[int, int] = {1: 0, -1: 0}
         for attempt, delta in enumerate((None, *self._SIDEBAR_SCROLL_DELTAS)):

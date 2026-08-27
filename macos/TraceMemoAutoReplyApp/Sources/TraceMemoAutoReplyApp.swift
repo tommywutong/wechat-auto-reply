@@ -59,6 +59,20 @@ enum ServiceState: Equatable {
     }
 }
 
+struct PersonaExample: Codable, Equatable, Identifiable {
+    var incoming: String = ""
+    var reply: String = ""
+    var note: String = ""
+
+    var id: String { "\(incoming)\u{1f}::\(reply)\u{1f}::\(note)" }
+
+    enum CodingKeys: String, CodingKey {
+        case incoming = "them"
+        case reply = "me"
+        case note
+    }
+}
+
 struct SafeConfig: Codable, Equatable {
     var enabled = true
     var replyMode = "ai"
@@ -75,7 +89,11 @@ struct SafeConfig: Codable, Equatable {
     var model = "deepseek-chat"
     var maxTokens = 300
     var maxChars = 80
+    var personaIdentity = ""
     var personaTone = ""
+    var personaPlaybook = ""
+    var personaBoundaries: [String] = []
+    var personaExamples: [PersonaExample] = []
     var perChatCooldownSeconds = 0
     var maxRepliesPerChatPerDay = 0
     var globalMaxPerHour = 30
@@ -84,6 +102,34 @@ struct SafeConfig: Codable, Equatable {
     var minDelaySeconds = 0.0
     var maxDelaySeconds = 0.0
     var typingSecondsPerChar = 0.0
+
+    func validationError() -> String? {
+        let integerRanges: [(String, Int, ClosedRange<Int>)] = [
+            ("轮询间隔", pollInterval, 5...300),
+            ("最大输出", maxTokens, 1...10_000),
+            ("单条最大字数", maxChars, 1...10_000),
+            ("每小时上限", globalMaxPerHour, 1...10_000),
+            ("每天上限", globalMaxPerDay, 1...10_000),
+            ("单会话每日上限", maxRepliesPerChatPerDay, 0...10_000),
+            ("单会话冷却", perChatCooldownSeconds, 0...86_400),
+            ("全局最小间隔", globalMinIntervalSeconds, 0...86_400),
+        ]
+        for (label, value, range) in integerRanges where !range.contains(value) {
+            return "\(label)应在 \(range.lowerBound) 到 \(range.upperBound) 之间。"
+        }
+        let decimalRanges: [(String, Double)] = [
+            ("最短等待", minDelaySeconds),
+            ("最长等待", maxDelaySeconds),
+            ("每字打字时间", typingSecondsPerChar),
+        ]
+        for (label, value) in decimalRanges where value < 0 || value > 60 {
+            return "\(label)应在 0 到 60 之间。"
+        }
+        if minDelaySeconds > maxDelaySeconds {
+            return "最短等待不能大于最长等待。"
+        }
+        return nil
+    }
 }
 
 struct TraceMemoSession: Codable, Identifiable, Hashable {
@@ -113,6 +159,10 @@ struct TraceMemoSession: Codable, Identifiable, Hashable {
 struct TraceMemoContactsPayload: Codable {
     let contacts: [TraceMemoSession]
     let count: Int
+}
+
+struct TraceMemoNicknamePayload: Codable {
+    let candidates: [String]
 }
 
 enum SessionCatalog {
@@ -157,6 +207,7 @@ enum SessionCatalog {
 
 enum AppPaths {
     static let serviceLabel = "com.wxauto.tracememo-autoreply"
+    static let engineServiceLabel = "com.wxauto.server"
 
     static func discover() -> URL? {
         let fileManager = FileManager.default
@@ -291,9 +342,12 @@ final class AppModel: ObservableObject {
     @Published var traceMemoKeychain = false
     @Published var deepSeekKeychain = false
     @Published var config = SafeConfig()
+    @Published private(set) var persistedConfig = SafeConfig()
     @Published var sessions: [TraceMemoSession] = []
     @Published var sessionsLoading = false
     @Published var sessionsError = ""
+    @Published var nicknameCandidates: [String] = []
+    @Published var nicknameLoading = false
     @Published var logs: [String] = []
     @Published var errorMessage = ""
     @Published var operationMessage = ""
@@ -324,6 +378,8 @@ final class AppModel: ObservableObject {
     }
 
     var repoName: String { repoURL?.lastPathComponent ?? "未连接项目" }
+
+    var hasUnsavedChanges: Bool { config != persistedConfig }
 
     var logPath: URL? {
         repoURL?.appendingPathComponent("var/tracememo-autoreply.log")
@@ -364,7 +420,7 @@ final class AppModel: ObservableObject {
         }
         let status = ServiceController.status()
         serviceState = status
-        localServerRunning = ServiceController.status(label: "com.wxauto.server") == .running
+        localServerRunning = ServiceController.status(label: AppPaths.engineServiceLabel) == .running
         traceMemoKeychain = ServiceController.keychainExists(service: "com.wxauto.tracememo-api-token")
         deepSeekKeychain = ServiceController.keychainExists(service: "com.wxauto.deepseek-api-key")
         Task { [weak self] in
@@ -394,26 +450,61 @@ final class AppModel: ObservableObject {
 
     func saveConfig() {
         guard let repoURL else { return }
+        if let validationError = config.validationError() {
+            errorMessage = validationError
+            operationMessage = ""
+            return
+        }
         isBusy = true
         errorMessage = ""
+        operationMessage = "正在保存设置并重启服务…"
         let payload = config
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = ConfigBridge.save(payload, repoURL: repoURL)
+            guard result.status == 0 else {
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.isBusy = false
+                    self.operationMessage = ""
+                    self.errorMessage = result.stderr.isEmpty ? "保存设置失败。" : result.stderr
+                }
+                return
+            }
+
+            // The poller and the HTTP engine are separate launchd jobs. The
+            // poller reads scope/limits itself, while the engine keeps the
+            // persona, model, and reply policy in memory until it restarts.
+            let restart = ServiceController.performAll(.restart, repoURL: repoURL)
+            let verify = restart.status == 0 ? ConfigBridge.load(repoURL: repoURL) : restart
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.isBusy = false
-                if result.status == 0 {
-                    let restart = ServiceController.perform(.restart, repoURL: repoURL)
-                    if restart.status == 0 {
-                        self.operationMessage = "设置已保存，自动回复服务已重启。"
-                    } else {
-                        self.operationMessage = "设置已保存，但服务重启失败。"
-                        self.errorMessage = restart.stderr.isEmpty ? "请手动重启服务。" : restart.stderr
-                    }
+                guard restart.status == 0 else {
+                    self.operationMessage = "规则服务已更新，但自动回复服务重启失败。"
+                    self.errorMessage = restart.stderr.isEmpty ? "请手动重启服务。" : restart.stderr
                     self.refreshStatus()
-                } else {
-                    self.errorMessage = result.stderr.isEmpty ? "保存设置失败" : result.stderr
+                    return
                 }
+                guard verify.status == 0,
+                      let data = verify.stdout.data(using: .utf8),
+                      let verified = try? JSONDecoder().decode(SafeConfig.self, from: data) else {
+                    self.operationMessage = "服务已重启，但无法验证配置是否生效。"
+                    self.errorMessage = verify.stderr.isEmpty ? "请打开日志检查配置。" : verify.stderr
+                    self.refreshStatus()
+                    return
+                }
+                guard verified == payload else {
+                    self.operationMessage = "服务已重启，但回读配置与输入不一致。"
+                    self.errorMessage = "请检查输入值后再次保存。"
+                    self.config = verified
+                    self.persistedConfig = verified
+                    self.refreshStatus()
+                    return
+                }
+                self.config = verified
+                self.persistedConfig = verified
+                self.operationMessage = "设置已保存并生效。\(Date().formatted(date: .omitted, time: .shortened))"
+                self.refreshStatus()
             }
         }
     }
@@ -427,8 +518,37 @@ final class AppModel: ObservableObject {
         }
         do {
             config = try JSONDecoder().decode(SafeConfig.self, from: data)
+            persistedConfig = config
         } catch {
             errorMessage = "配置读取失败：\(error.localizedDescription)"
+        }
+    }
+
+    func suggestSelfNicknames() {
+        guard let repoURL else { return }
+        nicknameLoading = true
+        sessionsError = ""
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = TraceMemoBridge.suggestNicknames(repoURL: repoURL)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.nicknameLoading = false
+                guard result.status == 0,
+                      let data = result.stdout.data(using: .utf8),
+                      let payload = try? JSONDecoder().decode(TraceMemoNicknamePayload.self, from: data) else {
+                    self.sessionsError = result.stderr.isEmpty ? "TraceMemo 暂时没有返回可确认的昵称。" : result.stderr
+                    return
+                }
+                self.nicknameCandidates = payload.candidates
+                if payload.candidates.count == 1, let nickname = payload.candidates.first {
+                    self.config.selfNicknames = [nickname]
+                    self.operationMessage = "已识别昵称候选“\(nickname)”，保存后用于群聊 @ 判断。"
+                } else if payload.candidates.isEmpty {
+                    self.sessionsError = "TraceMemo 未提供当前账号昵称，请手动填写。"
+                } else {
+                    self.operationMessage = "已找到多个昵称候选，请确认后选择一个。"
+                }
+            }
         }
     }
 
@@ -440,7 +560,7 @@ final class AppModel: ObservableObject {
         isBusy = true
         errorMessage = ""
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result = ServiceController.perform(action, repoURL: repoURL)
+            let result = ServiceController.performAll(action, repoURL: repoURL)
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.isBusy = false
@@ -484,7 +604,11 @@ final class AppModel: ObservableObject {
         if !sessions.isEmpty {
             return SessionCatalog.searchable(sessions).filter(isSessionAllowed).count
         }
-        return Set(config.allowTalkers).count + config.allowContacts.count
+        // TraceMemo 暂时不可用时，稳定 talker ID 是规范来源；旧名称只是迁移兼容，不能重复计数。
+        if !config.allowTalkers.isEmpty {
+            return Set(config.allowTalkers).count
+        }
+        return Set(config.allowContacts.map(normalizeSessionName)).count
     }
 
     var searchableSessionCount: Int {
@@ -555,9 +679,9 @@ enum ServiceAction {
 
     var successMessage: String {
         switch self {
-        case .start: return "自动回复服务已启动。"
-        case .stop: return "自动回复服务已停止。"
-        case .restart: return "自动回复服务已重启。"
+        case .start: return "规则服务和自动回复服务已启动。"
+        case .stop: return "规则服务和自动回复服务已停止。"
+        case .restart: return "规则服务和自动回复服务已重启。"
         }
     }
 
@@ -582,31 +706,66 @@ enum ServiceController {
         return .unknown(result.stdout)
     }
 
-    static func perform(_ action: ServiceAction, repoURL: URL) -> CommandResult {
-        let label = AppPaths.serviceLabel
+    static func performAll(_ action: ServiceAction, repoURL: URL) -> CommandResult {
+        // The HTTP engine must be available before the poller starts. On stop,
+        // reverse the order so the poller cannot issue requests to a server
+        // that is already going away.
+        let labels: [String]
+        switch action {
+        case .stop:
+            labels = [AppPaths.serviceLabel, AppPaths.engineServiceLabel]
+        case .start, .restart:
+            labels = [AppPaths.engineServiceLabel, AppPaths.serviceLabel]
+        }
+        for label in labels {
+            let result = perform(action, repoURL: repoURL, label: label)
+            guard result.status != 0 else { continue }
+            let serviceName = label == AppPaths.engineServiceLabel ? "规则服务" : "自动回复服务"
+            let detail = result.stderr.isEmpty ? action.failureMessage : result.stderr
+            return CommandResult(
+                status: result.status,
+                stdout: result.stdout,
+                stderr: "\(serviceName)：\(detail)"
+            )
+        }
+        return CommandResult(status: 0, stdout: "", stderr: "")
+    }
+
+    static func perform(
+        _ action: ServiceAction,
+        repoURL: URL,
+        label: String = AppPaths.serviceLabel
+    ) -> CommandResult {
         switch action {
         case .stop:
             let result = CommandRunner.run("/bin/launchctl", ["bootout", "\(domain())/\(label)"])
-            return result.status == 0 || status() == .stopped
+            return result.status == 0 || status(label: label) == .stopped
                 ? CommandResult(status: 0, stdout: result.stdout, stderr: "")
                 : result
         case .start:
-            if status() != .stopped {
+            if status(label: label) != .stopped {
                 return CommandRunner.run("/bin/launchctl", ["kickstart", "-k", "\(domain())/\(label)"])
             }
-            return bootstrap(repoURL: repoURL)
+            return bootstrap(repoURL: repoURL, label: label)
         case .restart:
             _ = CommandRunner.run("/bin/launchctl", ["bootout", "\(domain())/\(label)"])
-            return bootstrap(repoURL: repoURL)
+            return bootstrap(repoURL: repoURL, label: label)
         }
     }
 
-    private static func bootstrap(repoURL: URL) -> CommandResult {
+    private static func bootstrap(repoURL: URL, label: String) -> CommandResult {
         let plist = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/LaunchAgents/\(AppPaths.serviceLabel).plist")
+            .appendingPathComponent("Library/LaunchAgents/\(label).plist")
         if FileManager.default.fileExists(atPath: plist.path) {
             let result = CommandRunner.run("/bin/launchctl", ["bootstrap", domain(), plist.path])
             if result.status == 0 { return result }
+        }
+        guard label == AppPaths.serviceLabel else {
+            return CommandResult(
+                status: 1,
+                stdout: "",
+                stderr: "找不到规则服务的 launchd 配置，请先运行 scripts/macos-setup.sh。"
+            )
         }
         let install = repoURL.appendingPathComponent("scripts/install-tracememo-autoreply.sh")
         return CommandRunner.run("/bin/bash", [install.path], cwd: repoURL)
@@ -669,6 +828,15 @@ enum TraceMemoBridge {
             cwd: repoURL
         )
     }
+
+    static func suggestNicknames(repoURL: URL) -> CommandResult {
+        let script = repoURL.appendingPathComponent("scripts/tracememo_contacts.py")
+        return CommandRunner.run(
+            ConfigBridge.python(repoURL: repoURL),
+            [script.path, "suggest-nickname"],
+            cwd: repoURL
+        )
+    }
 }
 
 enum HealthCheck {
@@ -726,9 +894,9 @@ struct OverviewView: View {
                 HStack(spacing: 10) {
                     Button { model.start() } label: { Label("启动服务", systemImage: "play.fill") }
                         .buttonStyle(.borderedProminent).tint(Color(red: 0.08, green: 0.48, blue: 0.36))
-                        .disabled(model.isBusy || model.serviceState == .running)
+                        .disabled(model.isBusy || (model.serviceState == .running && model.localServerRunning))
                     Button { model.stop() } label: { Label("停止服务", systemImage: "stop.fill") }
-                        .buttonStyle(.bordered).disabled(model.isBusy || model.serviceState == .stopped)
+                        .buttonStyle(.bordered).disabled(model.isBusy || (model.serviceState == .stopped && !model.localServerRunning))
                     Button { model.restart() } label: { Label("重启", systemImage: "arrow.clockwise") }
                         .buttonStyle(.bordered).disabled(model.isBusy)
                     Spacer()
@@ -1001,6 +1169,26 @@ struct WhitelistView: View {
                         get: { model.config.selfNicknames.first ?? "" },
                         set: { model.config.selfNicknames = $0.isEmpty ? [] : [$0] }
                     ))
+                    HStack(spacing: 8) {
+                        Button("从 TraceMemo 识别", systemImage: "wand.and.stars") {
+                            model.suggestSelfNicknames()
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(model.nicknameLoading)
+                        if model.nicknameLoading { ProgressView().controlSize(.small) }
+                        Text("仅接受 TraceMemo 明确标注为当前账号的候选")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if !model.nicknameCandidates.isEmpty {
+                        HStack(spacing: 6) {
+                            Text("候选：").font(.caption).foregroundStyle(.secondary)
+                            ForEach(model.nicknameCandidates, id: \.self) { candidate in
+                                Button(candidate) { model.config.selfNicknames = [candidate] }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                            }
+                        }
+                    }
                 }
 
                 StringListEditor(
@@ -1015,17 +1203,99 @@ struct WhitelistView: View {
                 )
 
                 HStack {
+                    if model.hasUnsavedChanges {
+                        Label("有未保存修改", systemImage: "pencil.circle")
+                            .font(.caption).foregroundStyle(.orange)
+                    } else if !model.isBusy {
+                        Label("配置已同步", systemImage: "checkmark.circle")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     Spacer()
-                    Button("保存并重启", systemImage: "checkmark") { model.saveConfig() }
+                    Button(model.isBusy ? "保存中…" : "保存并重启", systemImage: model.isBusy ? "hourglass" : "checkmark") { model.saveConfig() }
                         .buttonStyle(.borderedProminent)
                         .tint(Color(red: 0.08, green: 0.48, blue: 0.36))
                         .disabled(model.isBusy)
+                }
+                if !model.operationMessage.isEmpty {
+                    Notice(text: model.operationMessage, color: Color(red: 0.08, green: 0.48, blue: 0.36), symbol: "checkmark.circle.fill")
+                }
+                if !model.errorMessage.isEmpty {
+                    Notice(text: model.errorMessage, color: .red, symbol: "exclamationmark.triangle.fill")
                 }
             }
             .padding(24)
         }
         .task {
             if model.sessions.isEmpty { model.refreshSessions() }
+        }
+    }
+}
+
+struct IntSettingField: View {
+    let title: String
+    let unit: String
+    @Binding var value: Int
+
+    var body: some View {
+        HStack {
+            Text(title)
+            Spacer()
+            TextField(title, value: $value, format: .number)
+                .textFieldStyle(.roundedBorder)
+                .multilineTextAlignment(.trailing)
+                .frame(width: 92)
+            Text(unit).foregroundStyle(.secondary).frame(width: 42, alignment: .leading)
+        }
+    }
+}
+
+struct DoubleSettingField: View {
+    let title: String
+    let unit: String
+    @Binding var value: Double
+
+    var body: some View {
+        HStack {
+            Text(title)
+            Spacer()
+            TextField(title, value: $value, format: .number.precision(.fractionLength(0...2)))
+                .textFieldStyle(.roundedBorder)
+                .multilineTextAlignment(.trailing)
+                .frame(width: 92)
+            Text(unit).foregroundStyle(.secondary).frame(width: 42, alignment: .leading)
+        }
+    }
+}
+
+struct PersonaExamplesEditor: View {
+    @Binding var examples: [PersonaExample]
+
+    var body: some View {
+        Section("示例对话") {
+            if examples.isEmpty {
+                Text("暂无示例。添加几组真实对话，模型会更容易保持你的口吻。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(examples.indices, id: \.self) { index in
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("示例 \(index + 1)").font(.subheadline.weight(.medium))
+                        Spacer()
+                        Button("移除", systemImage: "minus.circle") {
+                            examples.remove(at: index)
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.red)
+                    }
+                    TextField("对方说", text: $examples[index].incoming)
+                    TextField("我会回", text: $examples[index].reply)
+                    TextField("备注（可选）", text: $examples[index].note)
+                }
+                .padding(.vertical, 4)
+            }
+            Button("添加示例", systemImage: "plus") {
+                examples.append(PersonaExample())
+            }
         }
     }
 }
@@ -1042,7 +1312,7 @@ struct SettingsView: View {
                     Text("仅关键词规则").tag("rules")
                     Text("规则优先，未命中时使用 AI").tag("rules_then_ai")
                 }
-                Stepper("轮询间隔：\(model.config.pollInterval) 秒", value: $model.config.pollInterval, in: 5...300, step: 1)
+                IntSettingField(title: "轮询间隔", unit: "秒", value: $model.config.pollInterval)
                 Text("间隔越短，发现新消息越及时；最低 5 秒。")
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -1054,42 +1324,72 @@ struct SettingsView: View {
             )
 
             Section("回复风格") {
-                TextEditor(text: $model.config.personaTone)
-                    .frame(minHeight: 80, maxHeight: 140)
+                Text("我是谁 / 当前状态").font(.subheadline.weight(.medium))
+                TextEditor(text: $model.config.personaIdentity)
+                    .frame(minHeight: 60, maxHeight: 120)
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.25)))
-                Text("这里描述你的口吻，例如：简短、口语化、熟人聊天，不要客服腔。")
+                Text("说话方式").font(.subheadline.weight(.medium))
+                TextEditor(text: $model.config.personaTone)
+                    .frame(minHeight: 60, maxHeight: 120)
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.25)))
+                Text("应对策略").font(.subheadline.weight(.medium))
+                TextEditor(text: $model.config.personaPlaybook)
+                    .frame(minHeight: 90, maxHeight: 180)
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.25)))
+                Text("这些内容会作为 AI 的本地系统提示，不会上传到 TraceMemo。")
                     .font(.caption).foregroundStyle(.secondary)
             }
+
+            StringListEditor(
+                title: "人格边界",
+                placeholder: "例如：不评价第三方，不承诺具体时间",
+                values: $model.config.personaBoundaries
+            )
+
+            PersonaExamplesEditor(examples: $model.config.personaExamples)
 
             Section("DeepSeek") {
                 LabeledContent("服务商", value: model.config.provider)
                 TextField("模型", text: $model.config.model)
-                Stepper("最大输出：\(model.config.maxTokens) tokens", value: $model.config.maxTokens, in: 50...2000, step: 50)
+                IntSettingField(title: "最大输出", unit: "tokens", value: $model.config.maxTokens)
                 Text("API Key 只从 macOS Keychain 读取，App 不显示也不保存密钥。")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
             Section("回复限制") {
-                Stepper("每小时最多：\(model.config.globalMaxPerHour) 条", value: $model.config.globalMaxPerHour, in: 1...500)
-                Stepper("每天最多：\(model.config.globalMaxPerDay) 条", value: $model.config.globalMaxPerDay, in: 1...2000)
-                Stepper("单会话每日最多：\(model.config.maxRepliesPerChatPerDay == 0 ? "不限" : "\(model.config.maxRepliesPerChatPerDay) 条")", value: $model.config.maxRepliesPerChatPerDay, in: 0...500)
-                Stepper("单会话冷却：\(model.config.perChatCooldownSeconds) 秒", value: $model.config.perChatCooldownSeconds, in: 0...86_400, step: 30)
-                Stepper("全局最小间隔：\(model.config.globalMinIntervalSeconds) 秒", value: $model.config.globalMinIntervalSeconds, in: 0...3_600, step: 5)
-                Stepper("单条最多：\(model.config.maxChars) 字", value: $model.config.maxChars, in: 20...500, step: 10)
-                Stepper("最短等待：\(model.config.minDelaySeconds, specifier: "%.1f") 秒", value: $model.config.minDelaySeconds, in: 0...60, step: 0.5)
-                Stepper("最长等待：\(model.config.maxDelaySeconds, specifier: "%.1f") 秒", value: $model.config.maxDelaySeconds, in: 0...60, step: 0.5)
-                Stepper("每字打字时间：\(model.config.typingSecondsPerChar, specifier: "%.2f") 秒", value: $model.config.typingSecondsPerChar, in: 0...2, step: 0.01)
+                IntSettingField(title: "每小时最多", unit: "条", value: $model.config.globalMaxPerHour)
+                IntSettingField(title: "每天最多", unit: "条", value: $model.config.globalMaxPerDay)
+                IntSettingField(title: "单会话每日最多（0 为不限）", unit: "条", value: $model.config.maxRepliesPerChatPerDay)
+                IntSettingField(title: "单会话冷却", unit: "秒", value: $model.config.perChatCooldownSeconds)
+                IntSettingField(title: "全局最小间隔", unit: "秒", value: $model.config.globalMinIntervalSeconds)
+                IntSettingField(title: "单条最多", unit: "字", value: $model.config.maxChars)
+                DoubleSettingField(title: "最短等待", unit: "秒", value: $model.config.minDelaySeconds)
+                DoubleSettingField(title: "最长等待", unit: "秒", value: $model.config.maxDelaySeconds)
+                DoubleSettingField(title: "每字打字时间", unit: "秒", value: $model.config.typingSecondsPerChar)
                 Text("每日或每会话上限设为 0 表示不限；全局上限仍建议保留。")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
             Section {
                 HStack {
+                    if model.hasUnsavedChanges {
+                        Label("有未保存修改", systemImage: "pencil.circle")
+                            .font(.caption).foregroundStyle(.orange)
+                    } else if !model.isBusy {
+                        Label("配置已同步", systemImage: "checkmark.circle")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     Spacer()
-                    Button("保存设置", systemImage: "checkmark") { model.saveConfig() }
+                    Button(model.isBusy ? "保存中…" : "保存设置", systemImage: model.isBusy ? "hourglass" : "checkmark") { model.saveConfig() }
                         .buttonStyle(.borderedProminent)
                         .tint(Color(red: 0.08, green: 0.48, blue: 0.36))
                         .disabled(model.isBusy)
+                }
+                if !model.operationMessage.isEmpty {
+                    Notice(text: model.operationMessage, color: Color(red: 0.08, green: 0.48, blue: 0.36), symbol: "checkmark.circle.fill")
+                }
+                if !model.errorMessage.isEmpty {
+                    Notice(text: model.errorMessage, color: .red, symbol: "exclamationmark.triangle.fill")
                 }
             }
         }

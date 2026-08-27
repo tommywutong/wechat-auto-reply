@@ -11,6 +11,22 @@ if [ ! -x "$REPO_DIR/.venv/bin/python" ]; then
   exit 1
 fi
 
+# `.build/` is intentionally ignored by Git, so a fresh checkout or a cleaned
+# local build can lose the Vision OCR and mouse helpers. Rebuild them before
+# starting the sender instead of waiting for the first message to fail.
+HELPER_DIR="$REPO_DIR/.build"
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  echo "自动回复发送模式只能在 macOS 上运行。" >&2
+  exit 1
+fi
+if [[ ! -x "$HELPER_DIR/vision-ocr" || ! -x "$HELPER_DIR/mouse-click" || ! -x "$HELPER_DIR/mouse-scroll" ]]; then
+  echo "正在准备 macOS OCR 和界面辅助程序..."
+  if ! bash "$REPO_DIR/scripts/build-macos-helpers.sh"; then
+    echo "macOS OCR 辅助程序准备失败，请检查 Xcode Command Line Tools。" >&2
+    exit 1
+  fi
+fi
+
 export WXAUTO_TOKEN_FILE="$REPO_DIR/.wxauto_token"
 # 凭据统一从 macOS Keychain 读取，避免终端/IDE 继承旧 Token 覆盖新值。
 unset DEEPSEEK_API_KEY TRACEMEMO_API_TOKEN WECHATEXPLORER_API_TOKEN WXAUTO_LLM_API_KEY WXAUTO_TOKEN

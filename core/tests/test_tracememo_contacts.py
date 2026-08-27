@@ -1,4 +1,4 @@
-from scripts.tracememo_contacts import parse_contacts, fetch_recent_contacts
+from scripts.tracememo_contacts import _status_nickname_candidates, parse_contacts, fetch_recent_contacts
 
 
 def test_parse_contacts_prefers_remark_and_detects_groups() -> None:
@@ -57,3 +57,13 @@ def test_parse_contacts_can_preserve_recent_chat_order() -> None:
     result = parse_contacts(payload, preserve_order=True)
 
     assert [item["talker"] for item in result] == ["wxid-recent", "room@chatroom"]
+
+
+def test_status_nickname_candidates_only_uses_account_context() -> None:
+    payload = {
+        "account": {"nickname": "我的昵称"},
+        "contacts": [{"nickname": "普通联系人"}],
+        "currentUser": {"wechatNickname": "另一个候选"},
+    }
+
+    assert _status_nickname_candidates(payload) == ["我的昵称", "另一个候选"]

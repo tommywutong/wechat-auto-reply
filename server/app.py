@@ -78,6 +78,9 @@ class MessageIn(BaseModel):
     chat_id: str = Field(..., min_length=1)
     chat_name: str
     text: str
+    message_type: str = "text"
+    ocr_text: str = ""
+    batch_size: int = Field(default=1, ge=1, le=8)
     sender_name: str = ""
     is_group: bool = False
     mentioned_me: bool = False

@@ -59,8 +59,20 @@ class IncomingMessage:
 
     timestamp: float = field(default_factory=time.time)
 
+    message_type: str = "text"
+    """消息类型：text / image / sticker / unknown。"""
+
+    ocr_text: str = ""
+    """图片或表情包中本地 OCR 读到的文字（可能为空）。"""
+
+    batch_size: int = 1
+    """本次请求由几条连续入站消息组成。"""
+
     def __post_init__(self) -> None:
         self.text = (self.text or "").strip()
+        self.message_type = (self.message_type or "text").strip().lower() or "text"
+        self.ocr_text = (self.ocr_text or "").strip()
+        self.batch_size = max(1, int(self.batch_size or 1))
         if not self.sender_name:
             self.sender_name = self.chat_name
         if not self.account:

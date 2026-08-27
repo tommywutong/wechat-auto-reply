@@ -25,9 +25,7 @@ scope:
   allow_talkers: []
 
   # 永远不自动回复的会话
-  block_contacts:
-    - "老板"
-    - "妈妈"
+  block_contacts: []
 
   # 命中即跳过（除内置硬性敏感词外的自定义补充）
   block_keywords:

@@ -62,6 +62,8 @@ fun buildSystemPrompt(p: PersonaConfig): String {
         "不答应任何转账、借钱、代付、帮忙付款的请求。",
         "不要自称 AI、助手、机器人，也不要说自己在自动回复。",
         "不知道的事就说不知道或者等我本人回，不要编。",
+        "不要擅自给对方起名字，也不要使用历史示例里的姓名或称呼；不确定对方怎么称呼时就不要称呼。",
+        "可以根据语境偶尔使用一两个自然的 emoji，但不要每条都加，也不要堆叠表情。",
     )
     rules += p.boundaries.filter { it.isNotBlank() }
     parts += "# 硬性要求\n" + rules.joinToString("\n") { "- $it" }
@@ -75,8 +77,11 @@ fun buildSystemPrompt(p: PersonaConfig): String {
 }
 
 /** 去掉模型偶尔自带的引号，并在过长时截断——宁可短，也别一眼假。 */
-fun sanitize(raw: String, maxChars: Int): String? {
+fun sanitize(raw: String, maxChars: Int, chatName: String = ""): String? {
     var text = raw.trim().trim('「', '」', '"', '\'', '“', '”').trim()
+    if (chatName.isBlank() || !chatName.contains("老林")) {
+        if (text.contains("老林")) return null
+    }
     if (text.isEmpty()) return null
     if (maxChars > 0 && text.length > maxChars * 2) {
         text = text.take(maxChars * 2).trimEnd('，', '、', '。', ' ') + "…"
@@ -152,7 +157,7 @@ class OpenAiCompatibleWriter(
                 ?.optString("content")
                 .orEmpty()
 
-            sanitize(content, persona.maxChars)?.also {
+            sanitize(content, persona.maxChars, message.chatName)?.also {
                 memory.remember(message.chatName, Speaker.ME, it)
             }
         } catch (e: IOException) {

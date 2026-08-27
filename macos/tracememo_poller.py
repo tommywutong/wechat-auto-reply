@@ -1,18 +1,22 @@
 """通过 TraceMemo 轮询当前个人微信的白名单会话，并生成本地草稿。
 
-这个采集端只负责读取 TraceMemo、识别新入站文字消息并调用现有规则服务。
+这个采集端只负责读取 TraceMemo、识别新入站消息并调用现有规则服务；
+图片和表情包会尽力做本地 OCR，无法识别时保留明确的媒体占位信息。
 默认永远不操作微信界面，也不会向 TraceMemo 的机器人接口发送消息。
 """
 
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import fcntl
 import hashlib
 import json
 import logging
 import os
+import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -60,6 +64,8 @@ _NAME_KEYS = (
     "talker",
 )
 _TEXT_KEYS = ("content", "strContent", "msgContent", "message", "text", "body")
+_MEDIA_URL_KEYS = ("url", "encryptUrl", "imageUrl", "img", "path", "filePath", "localPath")
+_MEDIA_ID_KEYS = ("md5", "mediaId", "aeskey", "datName")
 _ID_KEYS = ("serverId", "msgSvrId", "msgId", "localId", "messageId", "id")
 _TIME_KEYS = ("createTime", "datetime", "msgTime", "timestamp", "time", "lastMsgTime")
 _OUTGOING_KEYS = ("isSender", "isSend", "isSelf", "fromMe", "isOutgoing", "outgoing")
@@ -93,6 +99,18 @@ class ChatMessage:
     is_group: bool
     outgoing: bool
     mentioned_me: bool = False
+    message_type: str = "text"
+    media_url: str = ""
+    media_id: str = ""
+    ocr_text: str = ""
+    message_ids: tuple[str, ...] = ()
+    batch_size: int = 1
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "message_type", (self.message_type or "text").strip().lower())
+        ids = tuple(self.message_ids) or (self.message_id,)
+        object.__setattr__(self, "message_ids", ids)
+        object.__setattr__(self, "batch_size", max(int(self.batch_size or 1), len(ids)))
 
 
 def _first_string(data: dict[str, Any], keys: Iterable[str]) -> str:
@@ -194,6 +212,50 @@ def _is_text_message(data: dict[str, Any]) -> bool:
         return False
 
 
+def _message_type(data: dict[str, Any]) -> str:
+    """把 TraceMemo 的中文 type 和数字 type 归一化成少量安全类别。"""
+
+    raw = data.get("type")
+    if raw is None:
+        return "text"
+    value = str(raw or "").strip().lower()
+    mapping = {
+        "1": "text",
+        "text": "text",
+        "message": "text",
+        "普通文本": "text",
+        "文本消息": "text",
+        "文字消息": "text",
+        "3": "image",
+        "图片": "image",
+        "image": "image",
+        "照片": "image",
+        "表情包": "sticker",
+        "sticker": "sticker",
+        "emoji": "sticker",
+    }
+    return mapping.get(value, "unknown")
+
+
+def _media_value(record: dict[str, Any], keys: Iterable[str]) -> str:
+    content_data = record.get("contentData")
+    candidates: list[dict[str, Any]] = []
+    if isinstance(content_data, dict):
+        candidates.append(content_data)
+    candidates.append(record)
+    for source in candidates:
+        for key in keys:
+            value = source.get(key)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+    return ""
+
+
+def _media_url(record: dict[str, Any]) -> str:
+    value = _media_value(record, _MEDIA_URL_KEYS)
+    return value if value.startswith(("http://", "https://", "file://", "/")) else ""
+
+
 def _record_lists(payload: Any) -> list[list[dict[str, Any]]]:
     """寻找响应中的对象列表，兼容常见 data/items/list 包装。"""
 
@@ -252,8 +314,19 @@ def parse_messages(
     for record in _best_records(payload, _TEXT_KEYS):
         text = _first_string(record, _TEXT_KEYS)
         outgoing = _first_bool(record, _OUTGOING_KEYS)
-        # 缺少方向、非纯文字或空内容时一律跳过；不能根据文案猜是不是自己发的。
-        if not text or outgoing is None or not _is_text_message(record):
+        kind = _message_type(record)
+        media_url = _media_url(record)
+        media_id = _media_value(record, _MEDIA_ID_KEYS)
+        # 缺少方向时一律跳过，不能根据文案猜是不是自己发的。图片/表情包
+        # 没有文字正文，但必须有 TraceMemo 提供的媒体地址或 ID 才值得进入引擎；
+        # 这样不会把旧版 type=3 的普通说明文字误当成真实图片。
+        if outgoing is None:
+            continue
+        if kind == "text" and not text:
+            continue
+        if kind in {"image", "sticker"} and not (media_url or media_id):
+            continue
+        if kind not in {"text", "image", "sticker"}:
             continue
         timestamp = _timestamp(record)
         raw_id = _first_string(record, _ID_KEYS)
@@ -266,7 +339,7 @@ def parse_messages(
                 message_id=message_id,
                 talker=conversation.talker,
                 chat_name=conversation.name,
-                text=text,
+                text=text or ("【图片】" if kind == "image" else "【表情包】"),
                 timestamp=timestamp,
                 sender_name=_first_string(record, _SENDER_KEYS) or conversation.name,
                 is_group=conversation.is_group,
@@ -275,6 +348,9 @@ def parse_messages(
                     conversation.is_group
                     and _contains_self_mention(text, self_nicknames)
                 ),
+                message_type=kind,
+                media_url=media_url,
+                media_id=media_id,
             )
         )
     return sorted(messages, key=lambda message: (message.timestamp, message.message_id))
@@ -503,6 +579,9 @@ class EngineClient:
                     "chat_id": f"tracememo:{message.talker}",
                     "chat_name": message.chat_name,
                     "text": message.text,
+                    "message_type": message.message_type,
+                    "ocr_text": message.ocr_text,
+                    "batch_size": message.batch_size,
                     "sender_name": message.sender_name,
                     "is_group": message.is_group,
                     "mentioned_me": message.mentioned_me,
@@ -520,6 +599,91 @@ class EngineClient:
             return None
 
 
+class MediaRecognizer:
+    """对新收到的图片/表情包做一次本地 OCR，失败时保留明确占位信息。"""
+
+    def __init__(
+        self,
+        *,
+        repo_dir: str | Path | None = None,
+        timeout: float = 10.0,
+        max_bytes: int = 8 * 1024 * 1024,
+    ) -> None:
+        root = Path(repo_dir) if repo_dir else REPO_DIR
+        self._ocr_binary = root / ".build" / "vision-ocr"
+        self._timeout = timeout
+        self._max_bytes = max_bytes
+
+    def _download(self, url: str, path: Path) -> bool:
+        if url.startswith("file://") or url.startswith("/"):
+            source = Path(url.removeprefix("file://"))
+            try:
+                if not source.is_file() or source.stat().st_size > self._max_bytes:
+                    return False
+                path.write_bytes(source.read_bytes())
+                return path.stat().st_size > 0
+            except OSError:
+                return False
+        if not url.startswith(("http://", "https://")):
+            return False
+        try:
+            response = requests.get(url, timeout=self._timeout, stream=True)
+            response.raise_for_status()
+            total = 0
+            with path.open("wb") as handle:
+                for chunk in response.iter_content(chunk_size=64 * 1024):
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > self._max_bytes:
+                        return False
+                    handle.write(chunk)
+            return total > 0
+        except (OSError, requests.RequestException):
+            logger.debug("媒体下载失败", exc_info=True)
+            return False
+
+    def _ocr(self, path: Path) -> str:
+        if not self._ocr_binary.is_file() or not os.access(self._ocr_binary, os.X_OK):
+            return ""
+        try:
+            result = subprocess.run(
+                [str(self._ocr_binary), str(path)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            if result.returncode != 0:
+                return ""
+            payload = json.loads(result.stdout)
+            values = [
+                str(item.get("text", "")).strip()
+                for item in payload.get("observations", [])
+                if str(item.get("text", "")).strip()
+            ]
+            return " ".join(values)[:500]
+        except (OSError, subprocess.TimeoutExpired, ValueError, TypeError, json.JSONDecodeError):
+            logger.debug("媒体 OCR 失败", exc_info=True)
+            return ""
+
+    def enrich(self, message: ChatMessage) -> ChatMessage:
+        if message.message_type not in {"image", "sticker"}:
+            return message
+        label = "图片" if message.message_type == "image" else "表情包"
+        ocr_text = ""
+        if message.media_url:
+            with tempfile.TemporaryDirectory(prefix="wxauto-media-") as temp_dir:
+                image_path = Path(temp_dir) / "media.bin"
+                if self._download(message.media_url, image_path):
+                    ocr_text = self._ocr(image_path)
+        if ocr_text:
+            text = f"【{label}】图片文字：{ocr_text}"
+        else:
+            text = f"【{label}】（暂未识别到图片中的文字）"
+        return dataclasses.replace(message, text=text, ocr_text=ocr_text, media_url="")
+
+
 class DraftWriter:
     def __init__(self, path: Path) -> None:
         self._path = path
@@ -531,6 +695,8 @@ class DraftWriter:
             "chat_name": message.chat_name,
             "talker": message.talker,
             "message_id": message.message_id,
+            "message_ids": list(message.message_ids),
+            "message_count": message.batch_size,
             "message_timestamp": message.timestamp,
             "sender_name": message.sender_name,
             "draft": decision.get("text"),
@@ -546,6 +712,39 @@ class WeChatSenderProtocol:
 
     def send(self, target_name: str, text: str) -> None:  # pragma: no cover - 接口声明
         raise NotImplementedError
+
+
+def _combine_messages(messages: list[ChatMessage]) -> ChatMessage:
+    """把同一轮连续消息提交给引擎，让模型决定合并表达还是逐项回应。"""
+
+    if len(messages) == 1:
+        return messages[0]
+    first = messages[0]
+    labels = {
+        "text": "文字",
+        "image": "图片",
+        "sticker": "表情包",
+    }
+    parts = [
+        f"第{index}条（{labels.get(message.message_type, '消息')}）：{message.text}"
+        for index, message in enumerate(messages, start=1)
+    ]
+    return dataclasses.replace(
+        first,
+        # 用第一条的 ID 作为重试键；下一轮 TraceMemo 仍会返回这条已读消息，
+        # PollState 才能在发送失败后安全重放同一份合并回复。
+        message_id=first.message_id,
+        text=(
+            f"对方连续发来 {len(messages)} 条消息：\n"
+            + "\n".join(parts)
+            + "\n请先判断它们是否属于同一件事：相关就合并成一条自然回复；"
+            "不相关时用简短分点分别回应，但仍只发一条微信消息。"
+        ),
+        message_type="batch",
+        ocr_text="\n".join(message.ocr_text for message in messages if message.ocr_text),
+        message_ids=tuple(message.message_id for message in messages),
+        batch_size=len(messages),
+    )
 
 
 @dataclass
@@ -575,6 +774,8 @@ class Poller:
         self_nicknames: Iterable[str] = (),
         style_profiles: StyleProfileStore | None = None,
         style_signature: str = "",
+        media_recognizer: MediaRecognizer | None = None,
+        merge_window_seconds: float = 8.0,
     ) -> None:
         self._trace_memo = trace_memo
         self._engine = engine
@@ -589,6 +790,75 @@ class Poller:
         self._style_profiles = style_profiles
         self._style_signature = style_signature
         self._style_profile_attempted_at: dict[str, float] = {}
+        self._media_recognizer = media_recognizer or MediaRecognizer()
+        self._merge_window_seconds = max(1.0, merge_window_seconds)
+
+    def _new_messages_for_conversation(
+        self,
+        messages: list[ChatMessage],
+        previous_poll: float,
+        stats: TickStats,
+    ) -> list[ChatMessage]:
+        """标记新消息并保留成组前的原始条目，避免重复处理。"""
+
+        fresh: list[ChatMessage] = []
+        for message in messages:
+            if message.outgoing:
+                continue
+            if message.timestamp <= previous_poll or self._state.has_seen(message.talker, message.message_id):
+                continue
+            self._state.mark_seen(message.talker, message.message_id)
+            stats.new_messages += 1
+            fresh.append(self._media_recognizer.enrich(message))
+        return fresh
+
+    def _message_batches(self, messages: list[ChatMessage]) -> list[list[ChatMessage]]:
+        """同一人短时间连发的内容为一轮；群聊不同发言人绝不混合。"""
+
+        batches: list[list[ChatMessage]] = []
+        for message in messages:
+            if not batches:
+                batches.append([message])
+                continue
+            current = batches[-1]
+            previous = current[-1]
+            close_enough = message.timestamp - previous.timestamp <= self._merge_window_seconds
+            same_sender = (
+                not message.is_group
+                or normalize_chat_name(message.sender_name) == normalize_chat_name(previous.sender_name)
+            )
+            if close_enough and same_sender and len(current) < 4:
+                current.append(message)
+            else:
+                batches.append([message])
+        return batches
+
+    def _send_target_allowed(self, message: ChatMessage) -> bool:
+        return self._sender is not None and (
+            self._send_all or normalize_chat_name(message.chat_name) == self._send_name
+        )
+
+    def _process_decision(
+        self,
+        message: ChatMessage,
+        decision: dict[str, Any] | None,
+        stats: TickStats,
+    ) -> None:
+        if decision and decision.get("should_reply"):
+            self._drafts.append(message, decision)
+            stats.drafts_generated += 1
+            logger.info("草稿已生成：%s（%d 条消息）", message.chat_name, message.batch_size)
+            if self._send_target_allowed(message):
+                reply_text = str(decision.get("text") or "").strip()
+                if reply_text:
+                    delay = max(0.0, float(decision.get("delay_seconds") or 0.0))
+                    if delay:
+                        logger.info("已生成 %s 回复，等待 %.1f 秒后发送", message.chat_name, delay)
+                        time.sleep(delay)
+                    self._send_reply(message, reply_text, stats)
+        elif decision:
+            stats.skipped += 1
+            logger.info("跳过 %s：%s", message.chat_name, decision.get("reason"))
 
     def _conversation_allowed(self, conversation: Conversation) -> bool:
         if conversation.talker in self._allowed_talkers:
@@ -731,65 +1001,31 @@ class Poller:
                 logger.warning("跳过会话 %s：%s", conversation.name, exc)
                 stats.errors += 1
                 continue
+            # 未完成的安全重试优先执行，但不会影响新消息的分批。
             for message in messages:
-                if message.outgoing:
-                    continue
-
                 retry_attempt = self._state.retry_attempts(message.talker, message.message_id)
-                if retry_attempt:
-                    if not self._state.retry_ready(message.talker, message.message_id, now):
-                        continue
-                    reply_text = self._state.retry_text(message.talker, message.message_id)
-                    if not reply_text:
-                        logger.error("%s 重试记录缺少回复内容，已清理", message.chat_name)
-                        self._state.clear_retry(message.talker, message.message_id)
-                        continue
-                    stats.retries_attempted += 1
-                    logger.info(
-                        "%s 开始第 %d/%d 次发送重试",
-                        message.chat_name,
-                        retry_attempt,
-                        MAX_SEND_RETRIES,
-                    )
-                    self._send_reply(
-                        message,
-                        reply_text,
-                        stats,
-                        retry_attempt=retry_attempt,
-                    )
+                if not retry_attempt or not self._state.retry_ready(message.talker, message.message_id, now):
                     continue
+                reply_text = self._state.retry_text(message.talker, message.message_id)
+                if not reply_text:
+                    logger.error("%s 重试记录缺少回复内容，已清理", message.chat_name)
+                    self._state.clear_retry(message.talker, message.message_id)
+                    continue
+                stats.retries_attempted += 1
+                logger.info("%s 开始第 %d/%d 次发送重试", message.chat_name, retry_attempt, MAX_SEND_RETRIES)
+                self._send_reply(message, reply_text, stats, retry_attempt=retry_attempt)
 
-                if message.timestamp <= previous_poll or self._state.has_seen(message.talker, message.message_id):
-                    continue
-                self._state.mark_seen(message.talker, message.message_id)
-                stats.new_messages += 1
-                logger.info("检测到新消息：会话 %s", message.chat_name)
+            fresh = self._new_messages_for_conversation(messages, previous_poll, stats)
+            for batch in self._message_batches(fresh):
+                message = _combine_messages(batch)
+                logger.info("检测到新消息：会话 %s（连续 %d 条）", message.chat_name, message.batch_size)
                 profile = self._style_for_message(conversation, messages, now)
-                if profile and profile.sample_count:
-                    decision = self._engine.draft(message, profile.prompt_context())
-                else:
-                    decision = self._engine.draft(message)
-                if decision and decision.get("should_reply"):
-                    self._drafts.append(message, decision)
-                    stats.drafts_generated += 1
-                    logger.info("草稿已生成：%s", message.chat_name)
-                    if (
-                        self._sender is not None
-                        and (
-                            self._send_all
-                            or normalize_chat_name(message.chat_name) == self._send_name
-                        )
-                    ):
-                        reply_text = str(decision.get("text") or "").strip()
-                        if reply_text:
-                            delay = max(0.0, float(decision.get("delay_seconds") or 0.0))
-                            if delay:
-                                logger.info("已生成 %s 回复，等待 %.1f 秒后发送", message.chat_name, delay)
-                                time.sleep(delay)
-                            self._send_reply(message, reply_text, stats)
-                elif decision:
-                    stats.skipped += 1
-                    logger.info("跳过 %s：%s", message.chat_name, decision.get("reason"))
+                decision = (
+                    self._engine.draft(message, profile.prompt_context())
+                    if profile and profile.sample_count
+                    else self._engine.draft(message)
+                )
+                self._process_decision(message, decision, stats)
         self._state.save(now)
         if stats.new_messages:
             logger.info(
@@ -834,6 +1070,7 @@ def _diagnose(trace_memo: TraceMemoClient, name: str, state: PollState) -> int:
         direction_counts = {"inbound": 0, "outbound": 0, "unknown": 0}
         timestamp_counts = {"valid": 0, "invalid": 0, "cursor_filtered": 0}
         text_count = 0
+        media_counts = {"image": 0, "sticker": 0}
         eligible = 0
         ids_present = 0
         for record in records:
@@ -843,6 +1080,9 @@ def _diagnose(trace_memo: TraceMemoClient, name: str, state: PollState) -> int:
                 ids_present += 1
             if _is_text_message(record):
                 text_count += 1
+            kind = _message_type(record)
+            if kind in media_counts:
+                media_counts[kind] += 1
             outgoing = _first_bool(record, _OUTGOING_KEYS)
             if outgoing is True:
                 direction_counts["outbound"] += 1
@@ -857,10 +1097,11 @@ def _diagnose(trace_memo: TraceMemoClient, name: str, state: PollState) -> int:
                 timestamp_counts["valid"] += 1
                 if timestamp <= previous:
                     timestamp_counts["cursor_filtered"] += 1
-                elif outgoing is False and _is_text_message(record):
+                elif outgoing is False and kind in {"text", "image", "sticker"}:
                     eligible += 1
         print(f"会话标识：{conversation.talker}")
         print(f"记录数量：{len(records)}；文本记录：{text_count}")
+        print(f"媒体记录：{json.dumps(media_counts, ensure_ascii=False)}")
         print(f"type 统计：{json.dumps(type_counts, ensure_ascii=False, sort_keys=True)}")
         print(f"方向统计：{json.dumps(direction_counts, ensure_ascii=False)}")
         print(f"时间字段：有效 {timestamp_counts['valid']}，无效 {timestamp_counts['invalid']}，被本地游标过滤 {timestamp_counts['cursor_filtered']}")
@@ -872,6 +1113,12 @@ def _diagnose(trace_memo: TraceMemoClient, name: str, state: PollState) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="TraceMemo 微信草稿轮询器")
     parser.add_argument("--interval", type=float, default=40, help="轮询间隔，默认 40 秒")
+    parser.add_argument(
+        "--merge-window",
+        type=float,
+        default=8.0,
+        help="同一会话连续消息的合并判断窗口（秒），默认 8 秒",
+    )
     parser.add_argument("--status-interval", type=float, default=30, help="无新消息时的状态输出间隔，默认 30 秒")
     parser.add_argument("--once", action="store_true", help="只轮询一轮")
     parser.add_argument("--dump-schema", action="store_true", help="只输出 API 字段名，不输出聊天内容")
@@ -895,6 +1142,8 @@ def main() -> int:
         parser.error("轮询间隔不得低于 5 秒")
     if args.status_interval < 5:
         parser.error("状态输出间隔不得低于 5 秒")
+    if args.merge_window < 1:
+        parser.error("连续消息合并窗口不得低于 1 秒")
 
     process_lock = PollerLock(Path(args.state_path).with_name("tracememo-poller.lock"))
     if not args.dump_schema and not args.diagnose_name:
@@ -950,6 +1199,7 @@ def main() -> int:
             self_nicknames=config.scope.self_nicknames,
             style_profiles=StyleProfileStore(Path(args.style_profile_path)),
             style_signature=config.signature,
+            merge_window_seconds=args.merge_window,
         )
     except (OSError, TraceMemoError) as exc:
         logger.error("无法启动轮询器：%s", exc)

@@ -40,6 +40,17 @@ def test_contains_text_accepts_wrapped_input_with_signature() -> None:
     assert sender._contains_text(observations, "回复内容", y_min=0.78, y_max=1.0)
 
 
+def test_contains_text_ignores_emoji_that_vision_does_not_ocr() -> None:
+    observations = (sender.OCRObservation("收到", 0.2, 0.82, 0.1, 0.03),)
+
+    assert sender._contains_text(observations, "收到😂", y_min=0.78, y_max=1.0)
+
+
+def test_emoji_only_detection_supports_variation_selectors() -> None:
+    assert sender._emoji_only("😂👍🏻")
+    assert not sender._emoji_only("收到😂")
+
+
 def test_find_send_button_only_accepts_bottom_right_exact_label() -> None:
     observations = (
         sender.OCRObservation("发送", 0.84, 0.93, 0.05, 0.03),

@@ -22,7 +22,7 @@ open "dist/TraceMemo 自动回复.app"
 
 [![编译安卓 APK](https://github.com/tommywutong/wechat-auto-reply/actions/workflows/build-apk.yml/badge.svg)](https://github.com/tommywutong/wechat-auto-reply/actions/workflows/build-apk.yml)
 ![平台](https://img.shields.io/badge/平台-Android%20%7C%20macOS%20%7C%20iOS-lightgrey)
-![测试](https://img.shields.io/badge/测试-193%20passed-brightgreen)
+![测试](https://img.shields.io/badge/测试-194%20passed-brightgreen)
 
 基于大语言模型的微信自动回复系统。通过一套可配置的人设与应对策略生成回复，
 而非关键词匹配，因此能够处理未预设的对话内容。
@@ -240,8 +240,11 @@ open "dist/TraceMemo 自动回复.app"
 
 #### 7. 日常运行与停止
 
-控制 App 的“启动、停止、重启”会同时管理规则服务和自动回复服务。关闭控制 App 不会停止后台服务；
-要停止自动回复，点击“停止服务”，或执行：
+控制 App 会把规则服务和自动回复服务汇总成“运行中 / 部分运行 / 已停止 / 未安装”状态。
+“启动”按规则服务、自动回复服务的顺序补齐未运行项，不会重启已经运行的服务；“停止”按相反
+顺序真正卸载两项；“重启”会完整停止后再依次启动。操作完成后 App 会复核两项服务的最终状态，
+不会在其中一项仍未运行时显示成功。关闭控制 App 不会停止后台服务；要停止自动回复，点击
+“停止服务”，或执行：
 
 ```bash
 launchctl bootout "gui/$(id -u)/com.wxauto.tracememo-autoreply"

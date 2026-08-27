@@ -32,12 +32,16 @@ enum AppSection: String, CaseIterable, Identifiable {
 enum ServiceState: Equatable {
     case running
     case stopped
+    case notInstalled
+    case partial
     case unknown(String)
 
     var title: String {
         switch self {
         case .running: return "运行中"
         case .stopped: return "已停止"
+        case .notInstalled: return "未安装"
+        case .partial: return "部分运行"
         case .unknown: return "状态未知"
         }
     }
@@ -45,8 +49,8 @@ enum ServiceState: Equatable {
     var color: Color {
         switch self {
         case .running: return Color(red: 0.08, green: 0.48, blue: 0.36)
-        case .stopped: return .secondary
-        case .unknown: return .orange
+        case .stopped, .notInstalled: return .secondary
+        case .partial, .unknown: return .orange
         }
     }
 
@@ -54,8 +58,42 @@ enum ServiceState: Equatable {
         switch self {
         case .running: return "checkmark.circle.fill"
         case .stopped: return "pause.circle.fill"
+        case .notInstalled: return "circle.dashed"
+        case .partial: return "circle.lefthalf.filled"
         case .unknown: return "questionmark.circle.fill"
         }
+    }
+}
+
+struct ServiceBundleState: Equatable {
+    let engine: ServiceState
+    let autoreply: ServiceState
+
+    static let checking = ServiceBundleState(
+        engine: .unknown("正在检查"),
+        autoreply: .unknown("正在检查")
+    )
+
+    var overall: ServiceState {
+        if engine == .running && autoreply == .running { return .running }
+        if engine == .notInstalled && autoreply == .notInstalled { return .notInstalled }
+        if engine == .stopped && autoreply == .stopped { return .stopped }
+        if engine == .running || autoreply == .running { return .partial }
+        if case .unknown = engine { return .unknown("服务状态无法确认") }
+        if case .unknown = autoreply { return .unknown("服务状态无法确认") }
+        return .partial
+    }
+
+    var allRunning: Bool { engine == .running && autoreply == .running }
+
+    var anyRunning: Bool { engine == .running || autoreply == .running }
+
+    var allInactive: Bool {
+        isInactive(engine) && isInactive(autoreply)
+    }
+
+    private func isInactive(_ state: ServiceState) -> Bool {
+        state == .stopped || state == .notInstalled
     }
 }
 
@@ -337,9 +375,8 @@ enum CommandRunner {
 @MainActor
 final class AppModel: ObservableObject {
     @Published var section: AppSection = .overview
-    @Published var serviceState: ServiceState = .unknown("正在检查")
+    @Published private(set) var serviceBundleState = ServiceBundleState.checking
     @Published var traceMemoHealthy = false
-    @Published var localServerRunning = false
     @Published var traceMemoKeychain = false
     @Published var deepSeekKeychain = false
     @Published var config = SafeConfig()
@@ -380,6 +417,12 @@ final class AppModel: ObservableObject {
 
     var repoName: String { repoURL?.lastPathComponent ?? "未连接项目" }
 
+    var serviceState: ServiceState { serviceBundleState.overall }
+
+    var autoReplyState: ServiceState { serviceBundleState.autoreply }
+
+    var localServerState: ServiceState { serviceBundleState.engine }
+
     var hasUnsavedChanges: Bool { config != persistedConfig }
 
     var logPath: URL? {
@@ -416,12 +459,13 @@ final class AppModel: ObservableObject {
 
     func refreshStatus() {
         guard let repoURL else {
-            serviceState = .unknown("请选择项目目录")
+            serviceBundleState = ServiceBundleState(
+                engine: .unknown("请选择项目目录"),
+                autoreply: .unknown("请选择项目目录")
+            )
             return
         }
-        let status = ServiceController.status()
-        serviceState = status
-        localServerRunning = ServiceController.status(label: AppPaths.engineServiceLabel) == .running
+        serviceBundleState = ServiceController.bundleStatus()
         traceMemoKeychain = ServiceController.keychainExists(service: "com.wxauto.tracememo-api-token")
         deepSeekKeychain = ServiceController.keychainExists(service: "com.wxauto.deepseek-api-key")
         Task { [weak self] in
@@ -481,7 +525,7 @@ final class AppModel: ObservableObject {
                 guard let self else { return }
                 self.isBusy = false
                 guard restart.status == 0 else {
-                    self.operationMessage = "规则服务已更新，但自动回复服务重启失败。"
+                    self.operationMessage = "设置已保存，但服务未能完成重启。"
                     self.errorMessage = restart.stderr.isEmpty ? "请手动重启服务。" : restart.stderr
                     self.refreshStatus()
                     return
@@ -560,6 +604,7 @@ final class AppModel: ObservableObject {
         }
         isBusy = true
         errorMessage = ""
+        operationMessage = action.progressMessage
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = ServiceController.performAll(action, repoURL: repoURL)
             DispatchQueue.main.async {
@@ -569,7 +614,9 @@ final class AppModel: ObservableObject {
                     self.operationMessage = action.successMessage
                     self.refreshStatus()
                 } else {
+                    self.operationMessage = ""
                     self.errorMessage = result.stderr.isEmpty ? action.failureMessage : result.stderr
+                    self.refreshStatus()
                 }
             }
         }
@@ -675,8 +722,18 @@ func normalizeSessionName(_ value: String) -> String {
     return result
 }
 
-enum ServiceAction {
+enum ServiceAction: Equatable {
     case start, stop, restart
+
+    var verb: String {
+        switch self {
+        case .start: return "启动"
+        case .stop: return "停止"
+        case .restart: return "重启"
+        }
+    }
+
+    var progressMessage: String { "正在\(verb)规则服务和自动回复服务…" }
 
     var successMessage: String {
         switch self {
@@ -695,41 +752,88 @@ enum ServiceAction {
     }
 }
 
+struct ServiceOperation: Equatable {
+    let action: ServiceAction
+    let label: String
+}
+
 enum ServiceController {
     static func domain() -> String { "gui/\(getuid())" }
 
     static func status(label: String = AppPaths.serviceLabel) -> ServiceState {
         let result = CommandRunner.run("/bin/launchctl", ["print", "\(domain())/\(label)"])
-        if result.status != 0 { return .stopped }
-        if result.stdout.contains("state = running") || result.stdout.contains("pid = ") {
-            return .running
+        if result.status == 0 {
+            let output = result.stdout.lowercased()
+            if output.contains("state = running") || output.contains("pid = ") {
+                return .running
+            }
+            if output.contains("state = exited") || output.contains("state = waiting")
+                || output.contains("state = spawn pending") || output.contains("state = suspended") {
+                return .stopped
+            }
+            return .unknown("launchd 未返回可识别状态")
         }
-        return .unknown(result.stdout)
+        if FileManager.default.fileExists(atPath: plistURL(label: label).path) {
+            return .stopped
+        }
+        return .notInstalled
+    }
+
+    static func bundleStatus() -> ServiceBundleState {
+        ServiceBundleState(
+            engine: status(label: AppPaths.engineServiceLabel),
+            autoreply: status(label: AppPaths.serviceLabel)
+        )
+    }
+
+    static func labels(for action: ServiceAction) -> [String] {
+        switch action {
+        case .stop:
+            return [AppPaths.serviceLabel, AppPaths.engineServiceLabel]
+        case .start, .restart:
+            return [AppPaths.engineServiceLabel, AppPaths.serviceLabel]
+        }
+    }
+
+    static func operations(for action: ServiceAction) -> [ServiceOperation] {
+        switch action {
+        case .start:
+            return labels(for: .start).map { ServiceOperation(action: .start, label: $0) }
+        case .stop:
+            return labels(for: .stop).map { ServiceOperation(action: .stop, label: $0) }
+        case .restart:
+            return operations(for: .stop) + operations(for: .start)
+        }
     }
 
     static func performAll(_ action: ServiceAction, repoURL: URL) -> CommandResult {
-        // The HTTP engine must be available before the poller starts. On stop,
-        // reverse the order so the poller cannot issue requests to a server
-        // that is already going away.
-        let labels: [String]
-        switch action {
-        case .stop:
-            labels = [AppPaths.serviceLabel, AppPaths.engineServiceLabel]
-        case .start, .restart:
-            labels = [AppPaths.engineServiceLabel, AppPaths.serviceLabel]
-        }
-        for label in labels {
-            let result = perform(action, repoURL: repoURL, label: label)
-            guard result.status != 0 else { continue }
-            let serviceName = label == AppPaths.engineServiceLabel ? "规则服务" : "自动回复服务"
-            let detail = result.stderr.isEmpty ? action.failureMessage : result.stderr
-            return CommandResult(
-                status: result.status,
-                stdout: result.stdout,
-                stderr: "\(serviceName)：\(detail)"
+        var failures: [String] = []
+        var output: [String] = []
+
+        for operation in operations(for: action) {
+            let result = perform(operation.action, repoURL: repoURL, label: operation.label)
+            collect(
+                result,
+                action: operation.action,
+                label: operation.label,
+                failures: &failures,
+                output: &output
             )
         }
-        return CommandResult(status: 0, stdout: "", stderr: "")
+
+        let desired = action == .stop ? waitForInactive() : waitForRunning()
+        let reachedTarget = action == .stop ? desired.allInactive : desired.allRunning
+        if !reachedTarget {
+            failures.append("最终状态：规则服务=\(desired.engine.title)，自动回复服务=\(desired.autoreply.title)")
+        }
+        guard failures.isEmpty else {
+            return CommandResult(
+                status: 1,
+                stdout: output.joined(separator: "\n"),
+                stderr: failures.joined(separator: "\n")
+            )
+        }
+        return CommandResult(status: 0, stdout: output.joined(separator: "\n"), stderr: "")
     }
 
     static func perform(
@@ -737,39 +841,117 @@ enum ServiceController {
         repoURL: URL,
         label: String = AppPaths.serviceLabel
     ) -> CommandResult {
+        let serviceName = displayName(for: label)
         switch action {
         case .stop:
-            let result = CommandRunner.run("/bin/launchctl", ["bootout", "\(domain())/\(label)"])
-            return result.status == 0 || status(label: label) == .stopped
-                ? CommandResult(status: 0, stdout: result.stdout, stderr: "")
-                : result
-        case .start:
-            if status(label: label) != .stopped {
-                return CommandRunner.run("/bin/launchctl", ["kickstart", "-k", "\(domain())/\(label)"])
+            if status(label: label) == .notInstalled {
+                return CommandResult(status: 0, stdout: "", stderr: "")
             }
-            return bootstrap(repoURL: repoURL, label: label)
+            let result = CommandRunner.run("/bin/launchctl", ["bootout", "\(domain())/\(label)"])
+            if result.status == 0 || isInactive(status(label: label)) {
+                return CommandResult(status: 0, stdout: result.stdout, stderr: "")
+            }
+            return withServiceContext(result, serviceName: serviceName, action: action)
+        case .start:
+            if status(label: label) == .running {
+                return CommandResult(status: 0, stdout: "", stderr: "")
+            }
+            return startService(repoURL: repoURL, label: label, serviceName: serviceName)
         case .restart:
-            _ = CommandRunner.run("/bin/launchctl", ["bootout", "\(domain())/\(label)"])
-            return bootstrap(repoURL: repoURL, label: label)
+            let stop = perform(.stop, repoURL: repoURL, label: label)
+            guard stop.status == 0 else { return stop }
+            return startService(repoURL: repoURL, label: label, serviceName: serviceName)
         }
     }
 
-    private static func bootstrap(repoURL: URL, label: String) -> CommandResult {
-        let plist = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/LaunchAgents/\(label).plist")
+    private static func startService(repoURL: URL, label: String, serviceName: String) -> CommandResult {
+        let plist = plistURL(label: label)
         if FileManager.default.fileExists(atPath: plist.path) {
-            let result = CommandRunner.run("/bin/launchctl", ["bootstrap", domain(), plist.path])
-            if result.status == 0 { return result }
+            let bootstrap = CommandRunner.run("/bin/launchctl", ["bootstrap", domain(), plist.path])
+            if bootstrap.status == 0 { return bootstrap }
+
+            // A loaded-but-exited job cannot be bootstrapped again. kickstart
+            // starts that job without using the force-restart flag.
+            let kickstart = CommandRunner.run("/bin/launchctl", ["kickstart", "\(domain())/\(label)"])
+            if kickstart.status == 0 { return kickstart }
+            let detail = kickstart.stderr.isEmpty
+                ? (bootstrap.stderr.isEmpty ? "launchd 未返回错误详情" : bootstrap.stderr)
+                : kickstart.stderr
+            return CommandResult(status: kickstart.status, stdout: kickstart.stdout, stderr: "\(serviceName)启动失败：\(detail)")
         }
+
         guard label == AppPaths.serviceLabel else {
             return CommandResult(
                 status: 1,
                 stdout: "",
-                stderr: "找不到规则服务的 launchd 配置，请先运行 scripts/macos-setup.sh。"
+                stderr: "\(serviceName)启动失败：找不到 launchd 配置，请先运行 scripts/macos-setup.sh。"
             )
         }
         let install = repoURL.appendingPathComponent("scripts/install-tracememo-autoreply.sh")
-        return CommandRunner.run("/bin/bash", [install.path], cwd: repoURL)
+        let result = CommandRunner.run("/bin/bash", [install.path], cwd: repoURL)
+        return result.status == 0 ? result : withServiceContext(result, serviceName: serviceName, action: .start)
+    }
+
+    private static func collect(
+        _ result: CommandResult,
+        action: ServiceAction,
+        label: String,
+        failures: inout [String],
+        output: inout [String]
+    ) {
+        if !result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            output.append(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        guard result.status != 0 else { return }
+        if result.stderr.isEmpty {
+            failures.append("\(displayName(for: label))\(action.verb)失败。")
+        } else {
+            failures.append(result.stderr)
+        }
+    }
+
+    private static func withServiceContext(
+        _ result: CommandResult,
+        serviceName: String,
+        action: ServiceAction
+    ) -> CommandResult {
+        let detail = result.stderr.isEmpty ? "未知错误" : result.stderr
+        return CommandResult(
+            status: result.status == 0 ? 1 : result.status,
+            stdout: result.stdout,
+            stderr: "\(serviceName)\(action.verb)失败：\(detail)"
+        )
+    }
+
+    private static func displayName(for label: String) -> String {
+        label == AppPaths.engineServiceLabel ? "规则服务" : "自动回复服务"
+    }
+
+    private static func plistURL(label: String) -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents/\(label).plist")
+    }
+
+    private static func isInactive(_ state: ServiceState) -> Bool {
+        state == .stopped || state == .notInstalled
+    }
+
+    private static func waitForRunning(timeout: TimeInterval = 8) -> ServiceBundleState {
+        wait(until: { $0.allRunning }, timeout: timeout)
+    }
+
+    private static func waitForInactive(timeout: TimeInterval = 8) -> ServiceBundleState {
+        wait(until: { $0.allInactive }, timeout: timeout)
+    }
+
+    private static func wait(until predicate: (ServiceBundleState) -> Bool, timeout: TimeInterval) -> ServiceBundleState {
+        var current = bundleStatus()
+        let deadline = Date(timeIntervalSinceNow: timeout)
+        while !predicate(current) && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.25)
+            current = bundleStatus()
+        }
+        return current
     }
 
     static func keychainExists(service: String) -> Bool {
@@ -870,22 +1052,39 @@ enum HealthCheck {
 struct StatusLine: View {
     let title: String
     let detail: String
-    let state: Bool
     let symbol: String
+    private let statusTitle: String
+    private let statusColor: Color
+
+    init(title: String, detail: String, state: ServiceState, symbol: String) {
+        self.title = title
+        self.detail = detail
+        self.symbol = symbol
+        statusTitle = state.title
+        statusColor = state.color
+    }
+
+    init(title: String, detail: String, state: Bool, symbol: String) {
+        self.title = title
+        self.detail = detail
+        self.symbol = symbol
+        statusTitle = state ? "正常" : "未连接"
+        statusColor = state ? Color(red: 0.08, green: 0.48, blue: 0.36) : .secondary
+    }
 
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: symbol)
-                .foregroundStyle(state ? Color(red: 0.08, green: 0.48, blue: 0.36) : .secondary)
+                .foregroundStyle(statusColor)
                 .frame(width: 20)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.subheadline.weight(.medium))
                 Text(detail).font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
-            Text(state ? "正常" : "未连接")
+            Text(statusTitle)
                 .font(.caption.weight(.medium))
-                .foregroundStyle(state ? Color(red: 0.08, green: 0.48, blue: 0.36) : .secondary)
+                .foregroundStyle(statusColor)
         }
     }
 }
@@ -908,9 +1107,9 @@ struct OverviewView: View {
                 HStack(spacing: 10) {
                     Button { model.start() } label: { Label("启动服务", systemImage: "play.fill") }
                         .buttonStyle(.borderedProminent).tint(Color(red: 0.08, green: 0.48, blue: 0.36))
-                        .disabled(model.isBusy || (model.serviceState == .running && model.localServerRunning))
+                        .disabled(model.isBusy || model.serviceBundleState.allRunning)
                     Button { model.stop() } label: { Label("停止服务", systemImage: "stop.fill") }
-                        .buttonStyle(.bordered).disabled(model.isBusy || (model.serviceState == .stopped && !model.localServerRunning))
+                        .buttonStyle(.bordered).disabled(model.isBusy || model.serviceBundleState.allInactive)
                     Button { model.restart() } label: { Label("重启", systemImage: "arrow.clockwise") }
                         .buttonStyle(.bordered).disabled(model.isBusy)
                     Spacer()
@@ -925,11 +1124,11 @@ struct OverviewView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("运行检查").font(.headline)
                     VStack(spacing: 12) {
-                        StatusLine(title: "自动回复服务", detail: "launchd · \(AppPaths.serviceLabel)", state: model.serviceState == .running, symbol: "bolt.horizontal.circle")
+                        StatusLine(title: "自动回复服务", detail: "launchd · \(AppPaths.serviceLabel)", state: model.autoReplyState, symbol: "bolt.horizontal.circle")
                         Divider()
                         StatusLine(title: "TraceMemo", detail: "本机 API · 127.0.0.1:6131", state: model.traceMemoHealthy, symbol: "link.circle")
                         Divider()
-                        StatusLine(title: "规则服务", detail: "本机 API · 127.0.0.1:8848", state: model.localServerRunning, symbol: "server.rack")
+                        StatusLine(title: "规则服务", detail: "本机 API · 127.0.0.1:8848", state: model.localServerState, symbol: "server.rack")
                         Divider()
                         StatusLine(title: "凭据", detail: "macOS Keychain（不会在 App 中显示）", state: model.traceMemoKeychain && model.deepSeekKeychain, symbol: "key.fill")
                     }
@@ -1510,10 +1709,12 @@ struct MenuContent: View {
             Button("打开控制面板", systemImage: "rectangle.on.rectangle") {
                 AppDelegate.shared?.showMainWindow()
             }
-            Button(model.serviceState == .running ? "停止服务" : "启动服务", systemImage: model.serviceState == .running ? "stop.fill" : "play.fill") {
-                if model.serviceState == .running { model.stop() } else { model.start() }
+            Button(model.serviceBundleState.allRunning ? "停止服务" : "启动服务", systemImage: model.serviceBundleState.allRunning ? "stop.fill" : "play.fill") {
+                if model.serviceBundleState.allRunning { model.stop() } else { model.start() }
             }
+            .disabled(model.isBusy)
             Button("重启服务", systemImage: "arrow.clockwise") { model.restart() }
+                .disabled(model.isBusy)
             Divider()
             Button("退出 App", systemImage: "power") { NSApp.terminate(nil) }
         }
@@ -1529,7 +1730,7 @@ struct TraceMemoAutoReplyApp: App {
         MenuBarExtra {
             MenuContent(model: appDelegate.model)
         } label: {
-            Label("自动回复", systemImage: appDelegate.model.serviceState == .running ? "bolt.fill" : "bolt")
+            Label("自动回复", systemImage: appDelegate.model.serviceBundleState.allRunning ? "bolt.fill" : "bolt")
         }
         .menuBarExtraStyle(.menu)
     }

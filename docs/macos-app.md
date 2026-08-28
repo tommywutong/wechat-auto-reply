@@ -95,4 +95,4 @@ Computer Use 只用于开发时观察不同微信版本的界面，不参与后�
 - 任何包含联系人、聊天内容、截图或 Token 的文件
 
 发布给其他人时，应提供脱敏的 `core/config.example.yaml` 和构建说明；用户在本机
-完成 Keychain、TraceMemo 和微信权限配置后再启动服务。
+完成 Keychain、微信数据库首次连接和微信权限配置后再启动服务。

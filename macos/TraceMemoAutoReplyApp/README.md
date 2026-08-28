@@ -1,6 +1,6 @@
 # TraceMemo AutoReply macOS App
 
-这是一个原生 SwiftUI 控制面板，用来管理本仓库的本地微信自动回复服务。它把状态、会话白名单、设置和日志集中到一个窗口中，但不替代 TraceMemo、Python 决策引擎或微信发送器。
+这是一个原生 SwiftUI 控制面板，用来管理本仓库的本地微信自动回复服务。它把状态、会话白名单、设置和日志集中到一个窗口中，并在启动服务前自动准备 TraceMemo Reader；它不替代 Python 决策引擎或微信发送器。
 
 ## 构建与测试
 

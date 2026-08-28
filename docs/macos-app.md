@@ -1,8 +1,9 @@
 # macOS 控制 App
 
 `TraceMemo 自动回复.app` 是现有本地自动回复服务的控制面板。它不替换
-TraceMemo、DeepSeek 或微信界面发送器，只负责把常用的启动、停止、设置和日志
-操作集中到一个原生 SwiftUI 窗口里。
+DeepSeek 或微信界面发送器，并内置了 TraceMemo Reader 的运行时准备逻辑：优先复用
+本机已有 TraceMemo 数据，缺少应用时自动下载固定版本到用户目录，不要求用户单独安装
+TraceMemo。它把常用的启动、停止、设置和日志操作集中到一个原生 SwiftUI 窗口里。
 
 ## 构建
 
@@ -52,6 +53,12 @@ Keychain 读取，App 不会显示或写入 Token。
 每次操作都会等待并复核两个服务的最终状态。只有二者都达到目标状态时，App 才显示操作成功；
 否则会分别指出规则服务和自动回复服务的状态。退出控制 App 不会停止后台服务，需要在概览页
 或菜单栏中明确点击“停止服务”。
+
+自动回复服务启动前会调用 `scripts/ensure-tracememo-runtime.sh`。如果 `6131` 已有可用
+服务就直接复用；否则启动内置 Reader，并使用本机已有的
+`~/Library/Application Support/TraceMemo`（或旧版 `WechatExplorer`）数据目录。首次使用
+仍需有已经连接好的微信数据库数据和对应的 Keychain Token；没有这些数据时，Reader 只能
+启动 API，无法读取聊天记录。
 
 首次进入会话管理页时，App 通过 `scripts/tracememo_contacts.py` 调用本机 TraceMemo
 `/recent_chat` 和 `/contact` 接口。`/recent_chat` 提供微信侧最近活跃顺序；如果旧版

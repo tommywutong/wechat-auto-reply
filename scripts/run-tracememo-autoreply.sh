@@ -31,6 +31,10 @@ export WXAUTO_TOKEN_FILE="$REPO_DIR/.wxauto_token"
 # 凭据统一从 macOS Keychain 读取，避免终端/IDE 继承旧 Token 覆盖新值。
 unset DEEPSEEK_API_KEY QWEN_API_KEY DASHSCOPE_API_KEY TRACEMEMO_API_TOKEN WECHATEXPLORER_API_TOKEN WXAUTO_LLM_API_KEY WXAUTO_TOKEN
 
+if [[ "${WXAUTO_SKIP_TRACEMEMO_BOOTSTRAP:-0}" != "1" ]]; then
+  bash "$REPO_DIR/scripts/ensure-tracememo-runtime.sh"
+fi
+
 INTERVAL_FILE="$REPO_DIR/var/poll-interval"
 if [ -s "$INTERVAL_FILE" ] && [[ "$(cat "$INTERVAL_FILE")" =~ ^[0-9]+$ ]]; then
   POLL_INTERVAL="$(cat "$INTERVAL_FILE")"

@@ -19,8 +19,8 @@ let up = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorP
 // interpreting a busy event stream as a drag of the conversation row.
 down?.setIntegerValueField(.mouseEventClickState, value: 1)
 up?.setIntegerValueField(.mouseEventClickState, value: 1)
-move?.post(tap: .cghidEventTap)
+move?.post(tap: .cgSessionEventTap)
 Thread.sleep(forTimeInterval: 0.02)
-down?.post(tap: .cghidEventTap)
+down?.post(tap: .cgSessionEventTap)
 Thread.sleep(forTimeInterval: 0.025)
-up?.post(tap: .cghidEventTap)
+up?.post(tap: .cgSessionEventTap)

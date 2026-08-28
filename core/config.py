@@ -81,6 +81,17 @@ class Scope:
 
 
 @dataclass
+class SendingSettings:
+    """界面发送策略；默认只在用户空闲时短暂切换微信。"""
+
+    quiet_mode: bool = True
+    only_when_user_idle: bool = True
+    user_idle_seconds: float = 1.5
+    allow_frontmost_switch: bool = True
+    deferred_retry_seconds: float = 15.0
+
+
+@dataclass
 class LLMSettings:
     enabled: bool = False
     provider: str = "anthropic"
@@ -120,6 +131,7 @@ class Config:
     signature: str = ""
     active_hours: list[tuple[dtime, dtime]] = field(default_factory=list)
     scope: Scope = field(default_factory=Scope)
+    sending: SendingSettings = field(default_factory=SendingSettings)
     limits: Limits = field(default_factory=Limits)
     rules: list[Rule] = field(default_factory=list)
     fallback: Fallback = field(default_factory=Fallback)
@@ -192,6 +204,19 @@ def build_config(data: dict[str, Any]) -> Config:
     if limits.min_delay_seconds > limits.max_delay_seconds:
         raise ConfigError("limits.min_delay_seconds 不能大于 max_delay_seconds")
 
+    sending_raw = data.get("sending") or {}
+    sending = SendingSettings(
+        quiet_mode=bool(sending_raw.get("quiet_mode", True)),
+        only_when_user_idle=bool(sending_raw.get("only_when_user_idle", True)),
+        user_idle_seconds=float(sending_raw.get("user_idle_seconds", 1.5)),
+        allow_frontmost_switch=bool(sending_raw.get("allow_frontmost_switch", True)),
+        deferred_retry_seconds=float(sending_raw.get("deferred_retry_seconds", 15.0)),
+    )
+    if not 0 <= sending.user_idle_seconds <= 60:
+        raise ConfigError("sending.user_idle_seconds 应在 0 到 60 秒之间")
+    if not 1 <= sending.deferred_retry_seconds <= 3600:
+        raise ConfigError("sending.deferred_retry_seconds 应在 1 到 3600 秒之间")
+
     fallback_raw = data.get("fallback") or {}
     fallback_kind = fallback_raw.get("type", "text")
     if fallback_kind not in ("llm", "text", "none"):
@@ -255,6 +280,7 @@ def build_config(data: dict[str, Any]) -> Config:
             block_contacts=list(scope_raw.get("block_contacts") or []),
             block_keywords=list(scope_raw.get("block_keywords") or []),
         ),
+        sending=sending,
         limits=limits,
         rules=[_parse_rule(r, i) for i, r in enumerate(data.get("rules") or [])],
         fallback=Fallback(kind=fallback_kind, text=fallback_raw.get("text", "")),

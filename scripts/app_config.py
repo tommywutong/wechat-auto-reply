@@ -117,6 +117,7 @@ def _public_settings(data: dict[str, Any]) -> dict[str, Any]:
     limits = data.get("limits") or {}
     llm = data.get("llm") or {}
     persona = data.get("persona") or {}
+    sending = data.get("sending") or {}
     return {
         "enabled": bool(data.get("enabled", True)),
         "replyMode": str(data.get("reply_mode", "ai")),
@@ -144,6 +145,11 @@ def _public_settings(data: dict[str, Any]) -> dict[str, Any]:
         "personaPlaybook": str(persona.get("playbook", "")),
         "personaBoundaries": _as_string_list(persona.get("boundaries")),
         "personaExamples": _as_persona_examples(persona.get("examples")),
+        "quietMode": bool(sending.get("quiet_mode", True)),
+        "onlyWhenUserIdle": bool(sending.get("only_when_user_idle", True)),
+        "userIdleSeconds": float(sending.get("user_idle_seconds", 1.5)),
+        "allowFrontmostSwitch": bool(sending.get("allow_frontmost_switch", True)),
+        "deferredRetrySeconds": float(sending.get("deferred_retry_seconds", 15.0)),
         "perChatCooldownSeconds": int(limits.get("per_chat_cooldown_seconds", 0)),
         "maxRepliesPerChatPerDay": int(limits.get("max_replies_per_chat_per_day", 0)),
         "globalMaxPerHour": int(limits.get("global_max_replies_per_hour", 30)),
@@ -192,6 +198,11 @@ def _apply(data: dict[str, Any], patch: dict[str, Any]) -> None:
         "personaPlaybook": ("persona", "playbook"),
         "personaBoundaries": ("persona", "boundaries"),
         "personaExamples": ("persona", "examples"),
+        "quietMode": ("sending", "quiet_mode"),
+        "onlyWhenUserIdle": ("sending", "only_when_user_idle"),
+        "userIdleSeconds": ("sending", "user_idle_seconds"),
+        "allowFrontmostSwitch": ("sending", "allow_frontmost_switch"),
+        "deferredRetrySeconds": ("sending", "deferred_retry_seconds"),
         "perChatCooldownSeconds": ("limits", "per_chat_cooldown_seconds"),
         "maxRepliesPerChatPerDay": ("limits", "max_replies_per_chat_per_day"),
         "globalMaxPerHour": ("limits", "global_max_replies_per_hour"),
@@ -223,6 +234,10 @@ def _apply(data: dict[str, Any], patch: dict[str, Any]) -> None:
             value = max(0, min(int(value), 86_400))
         if key in {"minDelaySeconds", "maxDelaySeconds", "typingSecondsPerChar"}:
             value = max(0.0, min(float(value), 60.0))
+        if key == "userIdleSeconds":
+            value = max(0.0, min(float(value), 60.0))
+        if key == "deferredRetrySeconds":
+            value = max(1.0, min(float(value), 3600.0))
         _set_path(data, path, value)
 
     limits = data.get("limits") or {}

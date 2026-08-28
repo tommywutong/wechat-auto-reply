@@ -21,6 +21,13 @@ scope:
   allow_talkers: []
   block_contacts: []
 
+sending:
+  quiet_mode: true
+  only_when_user_idle: true
+  user_idle_seconds: 1.5
+  allow_frontmost_switch: true
+  deferred_retry_seconds: 15
+
 limits:
   per_chat_cooldown_seconds: 900     # AI 模式下可以放宽一点，回复不会重复
   max_replies_per_chat_per_day: 8

@@ -19,7 +19,7 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "自动回复发送模式只能在 macOS 上运行。" >&2
   exit 1
 fi
-if [[ ! -x "$HELPER_DIR/vision-ocr" || ! -x "$HELPER_DIR/mouse-click" || ! -x "$HELPER_DIR/mouse-scroll" ]]; then
+if [[ ! -x "$HELPER_DIR/vision-ocr" || ! -x "$HELPER_DIR/mouse-click" || ! -x "$HELPER_DIR/mouse-scroll" || ! -x "$HELPER_DIR/mouse-state" ]]; then
   echo "正在准备 macOS OCR 和界面辅助程序..."
   if ! bash "$REPO_DIR/scripts/build-macos-helpers.sh"; then
     echo "macOS OCR 辅助程序准备失败，请检查 Xcode Command Line Tools。" >&2

@@ -13,11 +13,11 @@ let point = CGPoint(x: x, y: y)
 let source = CGEventSource(stateID: .combinedSessionState)
 let move = CGEvent(mouseEventSource: source, mouseType: .mouseMoved,
                    mouseCursorPosition: point, mouseButton: .left)
-move?.post(tap: .cghidEventTap)
+move?.post(tap: .cgSessionEventTap)
 Thread.sleep(forTimeInterval: 0.02)
 
 // A wheel event is separate from the click helper, so list scanning never
 // relies on a held mouse button or a drag gesture.
 let scroll = CGEvent(scrollWheelEvent2Source: source, units: .line,
                      wheelCount: 1, wheel1: delta, wheel2: 0, wheel3: 0)
-scroll?.post(tap: .cghidEventTap)
+scroll?.post(tap: .cgSessionEventTap)

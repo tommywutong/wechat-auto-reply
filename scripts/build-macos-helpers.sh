@@ -16,5 +16,7 @@ swiftc -O -framework CoreGraphics -framework Foundation \
   "$REPO_DIR/macos/mouse_click.swift" -o "$BUILD_DIR/mouse-click"
 swiftc -O -framework CoreGraphics -framework Foundation \
   "$REPO_DIR/macos/mouse_scroll.swift" -o "$BUILD_DIR/mouse-scroll"
-chmod +x "$BUILD_DIR/vision-ocr" "$BUILD_DIR/mouse-click" "$BUILD_DIR/mouse-scroll"
+swiftc -O -framework CoreGraphics -framework Foundation \
+  "$REPO_DIR/macos/mouse_state.swift" -o "$BUILD_DIR/mouse-state"
+chmod +x "$BUILD_DIR/vision-ocr" "$BUILD_DIR/mouse-click" "$BUILD_DIR/mouse-scroll" "$BUILD_DIR/mouse-state"
 echo "macOS OCR 和鼠标辅助程序已编译到 $BUILD_DIR"

@@ -138,6 +138,11 @@ struct SafeConfig: Codable, Equatable {
     var personaPlaybook = ""
     var personaBoundaries: [String] = []
     var personaExamples: [PersonaExample] = []
+    var quietMode = true
+    var onlyWhenUserIdle = true
+    var userIdleSeconds = 1.5
+    var allowFrontmostSwitch = true
+    var deferredRetrySeconds = 15.0
     var perChatCooldownSeconds = 0
     var maxRepliesPerChatPerDay = 0
     var globalMaxPerHour = 30
@@ -165,12 +170,16 @@ struct SafeConfig: Codable, Equatable {
             ("最短等待", minDelaySeconds),
             ("最长等待", maxDelaySeconds),
             ("每字打字时间", typingSecondsPerChar),
+            ("用户空闲时间", userIdleSeconds),
         ]
         for (label, value) in decimalRanges where value < 0 || value > 60 {
             return "\(label)应在 0 到 60 之间。"
         }
         if minDelaySeconds > maxDelaySeconds {
             return "最短等待不能大于最长等待。"
+        }
+        if deferredRetrySeconds < 1 || deferredRetrySeconds > 3600 {
+            return "队列检查间隔应在 1 到 3600 秒之间。"
         }
         return nil
     }
@@ -995,6 +1004,11 @@ enum ConfigBridge {
         if object["visionFallbackModel"] == nil { object["visionFallbackModel"] = "qwen3-vl-plus" }
         if object["visionBaseUrl"] == nil { object["visionBaseUrl"] = "" }
         if object["visionEnabled"] == nil { object["visionEnabled"] = true }
+        if object["quietMode"] == nil { object["quietMode"] = true }
+        if object["onlyWhenUserIdle"] == nil { object["onlyWhenUserIdle"] = true }
+        if object["userIdleSeconds"] == nil { object["userIdleSeconds"] = 1.5 }
+        if object["allowFrontmostSwitch"] == nil { object["allowFrontmostSwitch"] = true }
+        if object["deferredRetrySeconds"] == nil { object["deferredRetrySeconds"] = 15.0 }
         let normalized = try JSONSerialization.data(withJSONObject: object)
         return try JSONDecoder().decode(SafeConfig.self, from: normalized)
     }
@@ -1546,6 +1560,20 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
                 Toggle("启动时追补停机消息", isOn: $model.config.replayOfflineOnStart)
                 Text("关闭时，服务启动只建立当前历史游标，不会回复停机期间已经收到的消息。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("安静发送") {
+                Toggle("启用安静发送", isOn: $model.config.quietMode)
+                Toggle("仅在我停止操作后发送", isOn: $model.config.onlyWhenUserIdle)
+                    .disabled(!model.config.quietMode)
+                DoubleSettingField(title: "至少空闲", unit: "秒", value: $model.config.userIdleSeconds)
+                    .disabled(!model.config.quietMode || !model.config.onlyWhenUserIdle)
+                Toggle("允许短暂切换到微信", isOn: $model.config.allowFrontmostSwitch)
+                    .disabled(!model.config.quietMode)
+                DoubleSettingField(title: "忙碌时再次检查", unit: "秒", value: $model.config.deferredRetrySeconds)
+                    .disabled(!model.config.quietMode)
+                Text("检测到鼠标或键盘操作时，回复会保存在本地队列，不计入失败次数；发送完成后恢复原前台应用、鼠标位置和剪贴板。关闭“允许短暂切换”后，只有微信本来就在前台时才会发送。")
                     .font(.caption).foregroundStyle(.secondary)
             }
 

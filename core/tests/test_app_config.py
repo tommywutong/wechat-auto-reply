@@ -123,3 +123,24 @@ def test_public_settings_expose_replay_offline_flag(tmp_path: Path, monkeypatch)
     result = app_config._public_settings({})
 
     assert result["replayOfflineOnStart"] is True
+
+
+def test_public_settings_and_apply_support_quiet_sending() -> None:
+    payload = {"sending": {}}
+    app_config._apply(
+        payload,
+        {
+            "quietMode": True,
+            "onlyWhenUserIdle": True,
+            "userIdleSeconds": 2.5,
+            "allowFrontmostSwitch": False,
+            "deferredRetrySeconds": 20,
+        },
+    )
+
+    settings = app_config._public_settings(payload)
+    assert settings["quietMode"] is True
+    assert settings["onlyWhenUserIdle"] is True
+    assert settings["userIdleSeconds"] == 2.5
+    assert settings["allowFrontmostSwitch"] is False
+    assert settings["deferredRetrySeconds"] == 20

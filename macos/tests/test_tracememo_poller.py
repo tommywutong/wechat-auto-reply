@@ -492,6 +492,21 @@ class _RetryingSender:
             raise RuntimeError("输入区未确认")
 
 
+class _DeferredSender:
+    def __init__(self) -> None:
+        self.calls = []
+        self.busy = True
+
+    def send(self, target_name, text, *, is_group=False):
+        self.calls.append((target_name, text))
+        if self.busy:
+            error = RuntimeError("用户正在操作电脑")
+            error.defer_retry = True
+            error.retry_after = 15.0
+            error.send_attempted = False
+            raise error
+
+
 def test_poller_send_mode_can_be_limited_to_biscoffee(tmp_path: Path) -> None:
     now = 1_800_000_000
     messages = [
@@ -646,3 +661,59 @@ def test_poller_retries_only_unattempted_send_failure(tmp_path: Path) -> None:
 
     assert sender.calls == [("Biscoffee", "收到"), ("Biscoffee", "收到")]
     assert state.retry_attempts("biscoffee-id", "m1") == 0
+
+
+def test_user_activity_keeps_persistent_queue_without_consuming_retries(tmp_path: Path) -> None:
+    now = 1_800_000_000
+    message = poller.ChatMessage(
+        "m1", "biscoffee-id", "Biscoffee", "你好", now, "Biscoffee", False, False
+    )
+    sender = _DeferredSender()
+    state_path = tmp_path / "state.json"
+    state = poller.PollState(state_path)
+    state.ready_talkers.add("biscoffee-id")
+    state.last_polled_at = now - 10
+    instance = poller.Poller(
+        _FakeTraceMemo([message]),
+        _FakeEngine(),
+        {"biscoffee"},
+        state,
+        poller.DraftWriter(tmp_path / "drafts.jsonl"),
+        sender=sender,
+        send_name="Biscoffee",
+        replay_offline=True,
+    )
+    original_time = poller.time.time
+    poller.time.time = lambda: now
+    try:
+        stats = instance.tick()
+    finally:
+        poller.time.time = original_time
+
+    assert stats.deferred == 1
+    assert stats.send_failures == 0
+    assert state.has_retry("biscoffee-id", "m1")
+    assert state.retry_attempts("biscoffee-id", "m1") == 0
+
+    reloaded = poller.PollState(state_path)
+    reloaded.retry_state["biscoffee-id"]["m1"]["next_at"] = now - 1
+    reloaded.save()
+    sender.busy = False
+    resumed = poller.Poller(
+        _FakeTraceMemo([message]),
+        _FakeEngine(),
+        {"biscoffee"},
+        reloaded,
+        poller.DraftWriter(tmp_path / "drafts.jsonl"),
+        sender=sender,
+        send_name="Biscoffee",
+        replay_offline=True,
+    )
+    poller.time.time = lambda: now
+    try:
+        resumed.tick()
+    finally:
+        poller.time.time = original_time
+
+    assert sender.calls == [("Biscoffee", "收到"), ("Biscoffee", "收到")]
+    assert not reloaded.has_retry("biscoffee-id", "m1")

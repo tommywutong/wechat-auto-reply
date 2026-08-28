@@ -25,7 +25,7 @@ def test_launcher_handles_replay_flag_with_macos_bash(tmp_path: Path) -> None:
         tmp_path / ".venv" / "bin" / "python",
         "#!/bin/sh\nprintf '%s\\n' \"$@\"\n",
     )
-    for helper in ("vision-ocr", "mouse-click", "mouse-scroll"):
+    for helper in ("vision-ocr", "mouse-click", "mouse-scroll", "mouse-state"):
         _write_executable(tmp_path / ".build" / helper, "#!/bin/sh\nexit 0\n")
 
     fake_bin = tmp_path / "bin"

@@ -166,7 +166,7 @@ def test_sidebar_click_scans_visible_list_then_broad_scrolls(tmp_path: Path, mon
     monkeypatch.setattr(sender.time, "sleep", lambda _: None)
 
     assert instance._click_sidebar_target(bounds, "Biscoffee")
-    assert calls[0] == ("scroll", 10)
+    assert calls[0] == ("scroll", 35)
     assert calls[1][0] == "click"
     assert all(kind != "scroll" for kind, _ in calls[1:])
 
@@ -174,9 +174,9 @@ def test_sidebar_click_scans_visible_list_then_broad_scrolls(tmp_path: Path, mon
 def test_sidebar_scroll_plan_covers_down_and_reverse_directions() -> None:
     deltas = sender.WeChatSender._SIDEBAR_SCROLL_DELTAS
 
-    assert deltas[:8] == (10,) * 8
-    assert deltas[8:] == (-10,) * 16
-    assert sum(abs(delta) for delta in deltas) == 240
+    assert deltas[:8] == (35,) * 8
+    assert deltas[8:] == (-35,) * 16
+    assert sum(abs(delta) for delta in deltas) == 840
 
 
 def test_sender_error_records_whether_final_action_was_attempted() -> None:

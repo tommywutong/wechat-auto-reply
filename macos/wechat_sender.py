@@ -585,10 +585,12 @@ def _input_region_from_button(button: OCRObservation) -> tuple[float, float, flo
 class WeChatSender:
     """带目标会话确认的微信文字发送器。"""
 
-    # 微信的滚轮事件按“行”计数。旧策略每次只滚 6 行，长列表中很容易
-    # 只覆盖到当前窗口附近；这里使用中等步长并增加反向扫描范围。每一步
-    # 都会重新 OCR，目标出现即停止，右侧标题复核仍是发送前的硬门槛。
-    _SIDEBAR_SCROLL_DELTAS = (10,) * 8 + (-10,) * 16
+    # 微信的滚轮事件按“行”计数。实测 10 行通常只移动一个会话，
+    # 因此每次滚动 35 行，约前进 3～4 个会话，同时仍保留足够的可见
+    # 列表重叠，避免目标落在两次 OCR 之间。每一步都会重新 OCR，目标
+    # 出现即停止，右侧标题复核仍是发送前的硬门槛。
+    _SIDEBAR_SCROLL_STEP = 35
+    _SIDEBAR_SCROLL_DELTAS = (_SIDEBAR_SCROLL_STEP,) * 8 + (-_SIDEBAR_SCROLL_STEP,) * 16
 
     def __init__(self, *, repo_dir: str | Path | None = None, settle_seconds: float = 0.8) -> None:
         root = Path(repo_dir) if repo_dir else Path(__file__).resolve().parents[1]

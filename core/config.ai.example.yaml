@@ -27,6 +27,7 @@ sending:
   user_idle_seconds: 1.5
   allow_frontmost_switch: true
   deferred_retry_seconds: 15
+  deferred_reply_expiry_seconds: 600  # 用户忙碌时的排队回复最多保留 10 分钟
 
 limits:
   per_chat_cooldown_seconds: 900     # AI 模式下可以放宽一点，回复不会重复

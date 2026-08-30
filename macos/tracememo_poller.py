@@ -519,6 +519,30 @@ class PollState:
     def retry_entries(self, talker: str) -> list[tuple[str, dict[str, Any]]]:
         return list(self.retry_state.get(talker, {}).items())
 
+    def expire_deferred_retries(self, now: float, max_age_seconds: float) -> int:
+        """清理用户忙碌期间暂缓、且已经失去时效的回复。"""
+
+        cutoff = now - max(1.0, float(max_age_seconds))
+        expired = 0
+        for talker, entries in list(self.retry_state.items()):
+            for message_id, meta in list(entries.items()):
+                if not bool(meta.get("deferred")):
+                    continue
+                queued_at = float(
+                    meta.get("deferred_at", meta.get("message_timestamp", 0)) or 0
+                )
+                # 旧格式可能没有任何可判断时间，保留它交给原有重试逻辑，
+                # 避免因为升级而无条件丢弃一条待发送回复。
+                if queued_at <= 0 or queued_at > now + 60:
+                    continue
+                if queued_at >= cutoff:
+                    continue
+                entries.pop(message_id, None)
+                expired += 1
+            if not entries:
+                self.retry_state.pop(talker, None)
+        return expired
+
     def schedule_retry(
         self,
         talker: str,
@@ -562,6 +586,7 @@ class PollState:
         entries = self.retry_state.setdefault(talker, {})
         current = entries.get(message_id, {})
         attempts = int(current.get("attempts", 0))
+        deferred_at = float(current.get("deferred_at", now) or now)
         entries[message_id] = {
             "attempts": attempts,
             "next_at": now + max(1.0, delay),
@@ -571,6 +596,9 @@ class PollState:
             "message_timestamp": message_timestamp,
             "sender_name": sender_name,
             "deferred": True,
+            # 重试时沿用首次入队时间，避免用户持续操作电脑时不断刷新
+            # 有效期，导致一条过时回复永久留在队列里。
+            "deferred_at": deferred_at,
         }
         return attempts
 
@@ -881,6 +909,7 @@ class Poller:
         media_recognizer: MediaRecognizer | None = None,
         merge_window_seconds: float = 8.0,
         replay_offline: bool = False,
+        deferred_reply_expiry_seconds: float = 600.0,
         fetch_workers: int = 4,
     ) -> None:
         self._trace_memo = trace_memo
@@ -899,6 +928,7 @@ class Poller:
         self._media_recognizer = media_recognizer or MediaRecognizer()
         self._merge_window_seconds = max(1.0, merge_window_seconds)
         self._skip_startup_history = not replay_offline
+        self._deferred_reply_expiry_seconds = max(1.0, float(deferred_reply_expiry_seconds))
         self._fetch_workers = max(1, min(int(fetch_workers), 8))
 
     def _new_messages_for_conversation(
@@ -1146,6 +1176,13 @@ class Poller:
 
     def tick(self) -> TickStats:
         now = time.time()
+        expired = self._state.expire_deferred_retries(
+            now,
+            self._deferred_reply_expiry_seconds,
+        )
+        if expired:
+            logger.info("已清理 %d 条超过 %.0f 分钟的暂缓回复", expired, self._deferred_reply_expiry_seconds / 60)
+            self._state.save()
         # 默认启动时把当前历史视为基线，避免补回停机期间已经被人工读过的消息。
         # --replay-offline 会保留旧游标，显式开启离线追补。
         previous_poll = now if self._skip_startup_history else self._state.last_polled_at
@@ -1427,6 +1464,7 @@ def main() -> int:
             style_signature=config.signature,
             merge_window_seconds=args.merge_window,
             replay_offline=args.replay_offline,
+            deferred_reply_expiry_seconds=config.sending.deferred_reply_expiry_seconds,
             fetch_workers=args.fetch_workers,
         )
     except (OSError, TraceMemoError) as exc:

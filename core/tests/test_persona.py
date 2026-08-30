@@ -51,3 +51,19 @@ def test_config_rejects_unknown_style_preset() -> None:
                 "persona": {"identity": "独立开发者", "style_preset": "grok"},
             }
         )
+
+
+def test_sending_config_defaults_deferred_reply_expiry_to_ten_minutes() -> None:
+    config = build_config({"reply_mode": "rules"})
+
+    assert config.sending.deferred_reply_expiry_seconds == 600
+
+
+def test_sending_config_rejects_too_short_deferred_reply_expiry() -> None:
+    with pytest.raises(ConfigError, match="deferred_reply_expiry_seconds"):
+        build_config(
+            {
+                "reply_mode": "rules",
+                "sending": {"deferred_reply_expiry_seconds": 59},
+            }
+        )

@@ -77,6 +77,50 @@ def test_poll_state_keeps_only_recent_message_ids(tmp_path: Path) -> None:
     assert state.seen_ids["wxid-a"] == [str(index) for index in range(5, 205)]
 
 
+def test_poll_state_expires_stale_deferred_retries_but_keeps_normal_failures(tmp_path: Path) -> None:
+    state = poller.PollState(tmp_path / "state.json")
+    state.schedule_deferred_retry(
+        "wxid-a",
+        "deferred-old",
+        now=1_000,
+        reply_text="旧的暂缓回复",
+        delay=15,
+        message_timestamp=1_000,
+    )
+    state.schedule_deferred_retry(
+        "wxid-a",
+        "deferred-new",
+        now=1_500,
+        reply_text="新的暂缓回复",
+        delay=15,
+        message_timestamp=1_500,
+    )
+    state.schedule_deferred_retry(
+        "wxid-a",
+        "deferred-new",
+        now=1_590,
+        reply_text="新的暂缓回复",
+        delay=15,
+        message_timestamp=1_500,
+    )
+    state.schedule_retry(
+        "wxid-a",
+        "failed-send",
+        now=1_000,
+        reply_text="普通失败重试",
+        delay=15,
+        message_timestamp=1_000,
+    )
+
+    expired = state.expire_deferred_retries(now=1_601, max_age_seconds=600)
+
+    assert expired == 1
+    assert not state.has_retry("wxid-a", "deferred-old")
+    assert state.has_retry("wxid-a", "deferred-new")
+    assert state.retry_state["wxid-a"]["deferred-new"]["deferred_at"] == 1_500
+    assert state.has_retry("wxid-a", "failed-send")
+
+
 def test_text_type_filter_rejects_non_text_messages() -> None:
     assert poller._is_text_message({"type": 1}) is True
     assert poller._is_text_message({"type": "text"}) is True
@@ -694,6 +738,7 @@ def test_user_activity_keeps_persistent_queue_without_consuming_retries(tmp_path
     assert stats.send_failures == 0
     assert state.has_retry("biscoffee-id", "m1")
     assert state.retry_attempts("biscoffee-id", "m1") == 0
+    assert state.retry_state["biscoffee-id"]["m1"]["deferred_at"] == now
 
     reloaded = poller.PollState(state_path)
     reloaded.retry_state["biscoffee-id"]["m1"]["next_at"] = now - 1
@@ -717,3 +762,37 @@ def test_user_activity_keeps_persistent_queue_without_consuming_retries(tmp_path
 
     assert sender.calls == [("Biscoffee", "收到"), ("Biscoffee", "收到")]
     assert not reloaded.has_retry("biscoffee-id", "m1")
+
+
+def test_poller_drops_expired_deferred_retry_before_sending(tmp_path: Path) -> None:
+    now = 1_800_000_000
+    state = poller.PollState(tmp_path / "state.json")
+    state.ready_talkers.add("biscoffee-id")
+    state.schedule_deferred_retry(
+        "biscoffee-id",
+        "old-message",
+        now=now - 601,
+        reply_text="已经过时",
+        delay=15,
+        message_timestamp=now - 601,
+    )
+    sender = _FakeSender()
+    instance = poller.Poller(
+        _FakeTraceMemo([]),
+        _FakeEngine(),
+        {"biscoffee"},
+        state,
+        poller.DraftWriter(tmp_path / "drafts.jsonl"),
+        sender=sender,
+        send_name="Biscoffee",
+        deferred_reply_expiry_seconds=600,
+    )
+    original_time = poller.time.time
+    poller.time.time = lambda: now
+    try:
+        instance.tick()
+    finally:
+        poller.time.time = original_time
+
+    assert sender.calls == []
+    assert not state.has_retry("biscoffee-id", "old-message")

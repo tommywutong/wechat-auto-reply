@@ -16,6 +16,20 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(config.validationError(), "回复风格预设无效，请重新选择。")
     }
 
+    func testDeferredReplyExpiryDefaultsToTenMinutes() {
+        let config = SafeConfig()
+
+        XCTAssertEqual(config.deferredReplyExpirySeconds, 600)
+        XCTAssertNil(config.validationError())
+    }
+
+    func testDeferredReplyExpiryRejectsTooShortValues() {
+        var config = SafeConfig()
+        config.deferredReplyExpirySeconds = 59
+
+        XCTAssertEqual(config.validationError(), "延迟回复有效期应在 60 到 86400 之间。")
+    }
+
     func testOlderConfigPayloadDefaultsToCustomStyle() throws {
         let encoded = try JSONEncoder().encode(SafeConfig())
         var object = try XCTUnwrap(

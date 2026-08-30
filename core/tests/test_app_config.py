@@ -149,6 +149,7 @@ def test_public_settings_and_apply_support_quiet_sending() -> None:
             "userIdleSeconds": 2.5,
             "allowFrontmostSwitch": False,
             "deferredRetrySeconds": 20,
+            "deferredReplyExpirySeconds": 600,
         },
     )
 
@@ -158,3 +159,4 @@ def test_public_settings_and_apply_support_quiet_sending() -> None:
     assert settings["userIdleSeconds"] == 2.5
     assert settings["allowFrontmostSwitch"] is False
     assert settings["deferredRetrySeconds"] == 20
+    assert settings["deferredReplyExpirySeconds"] == 600

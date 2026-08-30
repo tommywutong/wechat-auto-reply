@@ -144,6 +144,7 @@ struct SafeConfig: Codable, Equatable {
     var userIdleSeconds = 1.5
     var allowFrontmostSwitch = true
     var deferredRetrySeconds = 15.0
+    var deferredReplyExpirySeconds = 600
     var perChatCooldownSeconds = 0
     var maxRepliesPerChatPerDay = 0
     var globalMaxPerHour = 30
@@ -163,6 +164,7 @@ struct SafeConfig: Codable, Equatable {
             ("单会话每日上限", maxRepliesPerChatPerDay, 0...10_000),
             ("单会话冷却", perChatCooldownSeconds, 0...86_400),
             ("全局最小间隔", globalMinIntervalSeconds, 0...86_400),
+            ("延迟回复有效期", deferredReplyExpirySeconds, 60...86_400),
         ]
         for (label, value, range) in integerRanges where !range.contains(value) {
             return "\(label)应在 \(range.lowerBound) 到 \(range.upperBound) 之间。"
@@ -1013,6 +1015,7 @@ enum ConfigBridge {
         if object["userIdleSeconds"] == nil { object["userIdleSeconds"] = 1.5 }
         if object["allowFrontmostSwitch"] == nil { object["allowFrontmostSwitch"] = true }
         if object["deferredRetrySeconds"] == nil { object["deferredRetrySeconds"] = 15.0 }
+        if object["deferredReplyExpirySeconds"] == nil { object["deferredReplyExpirySeconds"] = 600 }
         if object["personaStylePreset"] == nil { object["personaStylePreset"] = "" }
         let normalized = try JSONSerialization.data(withJSONObject: object)
         return try JSONDecoder().decode(SafeConfig.self, from: normalized)
@@ -1578,6 +1581,10 @@ struct SettingsView: View {
                     .disabled(!model.config.quietMode)
                 DoubleSettingField(title: "忙碌时再次检查", unit: "秒", value: $model.config.deferredRetrySeconds)
                     .disabled(!model.config.quietMode)
+                IntSettingField(title: "延迟回复有效期", unit: "秒", value: $model.config.deferredReplyExpirySeconds)
+                    .disabled(!model.config.quietMode)
+                Text("默认 600 秒（10 分钟）。超过有效期的暂缓回复会自动丢弃，不再发送过时内容。")
+                    .font(.caption).foregroundStyle(.secondary)
                 Text("检测到鼠标或键盘操作时，回复会保存在本地队列，不计入失败次数；发送完成后恢复原前台应用、鼠标位置和剪贴板。关闭“允许短暂切换”后，只有微信本来就在前台时才会发送。")
                     .font(.caption).foregroundStyle(.secondary)
             }

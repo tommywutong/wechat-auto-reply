@@ -89,6 +89,8 @@ class SendingSettings:
     user_idle_seconds: float = 1.5
     allow_frontmost_switch: bool = True
     deferred_retry_seconds: float = 15.0
+    deferred_reply_expiry_seconds: int = 600
+    """用户忙碌时排队的回复最多保留多久，默认 10 分钟。"""
 
 
 @dataclass
@@ -211,11 +213,14 @@ def build_config(data: dict[str, Any]) -> Config:
         user_idle_seconds=float(sending_raw.get("user_idle_seconds", 1.5)),
         allow_frontmost_switch=bool(sending_raw.get("allow_frontmost_switch", True)),
         deferred_retry_seconds=float(sending_raw.get("deferred_retry_seconds", 15.0)),
+        deferred_reply_expiry_seconds=int(sending_raw.get("deferred_reply_expiry_seconds", 600)),
     )
     if not 0 <= sending.user_idle_seconds <= 60:
         raise ConfigError("sending.user_idle_seconds 应在 0 到 60 秒之间")
     if not 1 <= sending.deferred_retry_seconds <= 3600:
         raise ConfigError("sending.deferred_retry_seconds 应在 1 到 3600 秒之间")
+    if not 60 <= sending.deferred_reply_expiry_seconds <= 86_400:
+        raise ConfigError("sending.deferred_reply_expiry_seconds 应在 60 到 86400 秒之间")
 
     fallback_raw = data.get("fallback") or {}
     fallback_kind = fallback_raw.get("type", "text")

@@ -138,6 +138,7 @@ struct SafeConfig: Codable, Equatable {
     var personaPlaybook = ""
     var personaBoundaries: [String] = []
     var personaExamples: [PersonaExample] = []
+    var personaStylePreset = ""
     var quietMode = true
     var onlyWhenUserIdle = true
     var userIdleSeconds = 1.5
@@ -180,6 +181,9 @@ struct SafeConfig: Codable, Equatable {
         }
         if deferredRetrySeconds < 1 || deferredRetrySeconds > 3600 {
             return "队列检查间隔应在 1 到 3600 秒之间。"
+        }
+        if !["", "grok4_1"].contains(personaStylePreset) {
+            return "回复风格预设无效，请重新选择。"
         }
         return nil
     }
@@ -1009,6 +1013,7 @@ enum ConfigBridge {
         if object["userIdleSeconds"] == nil { object["userIdleSeconds"] = 1.5 }
         if object["allowFrontmostSwitch"] == nil { object["allowFrontmostSwitch"] = true }
         if object["deferredRetrySeconds"] == nil { object["deferredRetrySeconds"] = 15.0 }
+        if object["personaStylePreset"] == nil { object["personaStylePreset"] = "" }
         let normalized = try JSONSerialization.data(withJSONObject: object)
         return try JSONDecoder().decode(SafeConfig.self, from: normalized)
     }
@@ -1584,6 +1589,12 @@ struct SettingsView: View {
             )
 
             Section("回复风格") {
+                Picker("风格预设", selection: $model.config.personaStylePreset) {
+                    Text("自定义").tag("")
+                    Text("Grok 4.1 风格（实验）").tag("grok4_1")
+                }
+                Text("预设只调整表达方式，不会覆盖你的身份、历史画像、白名单、发送限制或安全规则。遇到严肃和敏感话题时会自动收起讽刺。")
+                    .font(.caption).foregroundStyle(.secondary)
                 Text("我是谁 / 当前状态").font(.subheadline.weight(.medium))
                 TextEditor(text: $model.config.personaIdentity)
                     .frame(minHeight: 60, maxHeight: 120)

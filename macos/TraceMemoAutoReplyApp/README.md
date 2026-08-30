@@ -22,6 +22,7 @@ bash scripts/run-macos-app.sh
 - `Sources/TraceMemoAutoReplyApp.swift`：应用入口、模型、服务控制、配置桥接和视图。
 - `Tests/SessionMatchingTests.swift`：稳定会话与名称匹配。
 - `Tests/LogFormatterTests.swift`：日志格式化与展示行为。
+- `Tests/SettingsTests.swift`：设置兼容性与风格预设校验。
 - `Resources/Info.plist`：打包元数据。
 
 ## 外部协作

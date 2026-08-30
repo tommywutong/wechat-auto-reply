@@ -145,6 +145,7 @@ def _public_settings(data: dict[str, Any]) -> dict[str, Any]:
         "personaPlaybook": str(persona.get("playbook", "")),
         "personaBoundaries": _as_string_list(persona.get("boundaries")),
         "personaExamples": _as_persona_examples(persona.get("examples")),
+        "personaStylePreset": str(persona.get("style_preset", "")).strip().lower(),
         "quietMode": bool(sending.get("quiet_mode", True)),
         "onlyWhenUserIdle": bool(sending.get("only_when_user_idle", True)),
         "userIdleSeconds": float(sending.get("user_idle_seconds", 1.5)),
@@ -198,6 +199,7 @@ def _apply(data: dict[str, Any], patch: dict[str, Any]) -> None:
         "personaPlaybook": ("persona", "playbook"),
         "personaBoundaries": ("persona", "boundaries"),
         "personaExamples": ("persona", "examples"),
+        "personaStylePreset": ("persona", "style_preset"),
         "quietMode": ("sending", "quiet_mode"),
         "onlyWhenUserIdle": ("sending", "only_when_user_idle"),
         "userIdleSeconds": ("sending", "user_idle_seconds"),
@@ -214,6 +216,7 @@ def _apply(data: dict[str, Any], patch: dict[str, Any]) -> None:
     }
     allowed_modes = {"ai", "rules", "rules_then_ai"}
     allowed_groups = {"never", "only_at_me", "always"}
+    allowed_style_presets = {"", "grok4_1"}
     for key, path in mapping.items():
         if key not in patch:
             continue
@@ -222,6 +225,10 @@ def _apply(data: dict[str, Any], patch: dict[str, Any]) -> None:
             raise ValueError("replyMode 无效")
         if key == "replyToGroup" and value not in allowed_groups:
             raise ValueError("replyToGroup 无效")
+        if key == "personaStylePreset":
+            value = str(value or "").strip().lower()
+            if value not in allowed_style_presets:
+                raise ValueError("personaStylePreset 无效")
         if key in {"selfNicknames", "allowContacts", "allowTalkers", "blockContacts", "blockKeywords", "activeHours", "personaBoundaries"}:
             value = _as_string_list(value)
         if key == "personaExamples":

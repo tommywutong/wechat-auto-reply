@@ -8,7 +8,7 @@ from datetime import time as dtime
 from pathlib import Path
 from typing import Any, Optional
 
-from .persona import Persona, build_persona
+from .persona import STYLE_PRESETS, Persona, build_persona
 from .providers import ANTHROPIC, PROVIDERS, describe, is_openai_compatible
 
 import yaml
@@ -229,6 +229,11 @@ def build_config(data: dict[str, Any]) -> Config:
         )
 
     persona = build_persona(data.get("persona") or {})
+    if persona.style_preset and persona.style_preset not in STYLE_PRESETS:
+        raise ConfigError(
+            f"persona.style_preset 只能是空值或 {', '.join(sorted(STYLE_PRESETS))}，"
+            f"收到 {persona.style_preset!r}"
+        )
     if mode == "ai" and not persona.is_configured():
         raise ConfigError(
             "reply_mode 为 ai 时必须配置 persona.identity 或 persona.playbook，"

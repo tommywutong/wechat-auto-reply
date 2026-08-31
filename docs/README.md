@@ -8,6 +8,7 @@
 - [`macos-app.md`](macos-app.md)：SwiftUI 控制 App、服务状态、设置、会话和日志。
 - [`tracememo-macos-draft-mode.md`](tracememo-macos-draft-mode.md)：TraceMemo 字段诊断、草稿模式和端到端准备。
 - [`ios-feasibility.md`](ios-feasibility.md)：iOS 沙盒边界、Appium、tweak 与 macOS 代理比较。
+- [`ios-companion.md`](ios-companion.md)：Objective-C/UIKit iPhone 控制端的构建、配对和安全边界。
 
 ## 部署
 

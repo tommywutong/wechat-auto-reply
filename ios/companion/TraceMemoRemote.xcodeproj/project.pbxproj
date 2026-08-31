@@ -1,0 +1,336 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		2857A161B8014F0B648526D3 /* TRSceneDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = F7D7AE7F789774AA3783EC2D /* TRSceneDelegate.m */; };
+		532C3454D3784E7B6A5654A2 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = EE21F6D4CEC7384E31B31ECB /* main.m */; };
+		695D93CA2BA946124F1E0848 /* TRKeychainStore.m in Sources */ = {isa = PBXBuildFile; fileRef = B2006AAE77A1AEBD465DD5A4 /* TRKeychainStore.m */; };
+		74D915B1C0C41AFB30957ABD /* TRRootViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = 18C4A39128DC71A5037BCBFC /* TRRootViewController.m */; };
+		7D9A542893F204C00F454F22 /* TRAppDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = EE47B1C5646502B083BEEE25 /* TRAppDelegate.m */; };
+		7FA1B0C053C12593941E0369 /* TRAppState.m in Sources */ = {isa = PBXBuildFile; fileRef = 57BBF5CB53653168C2FD0E9C /* TRAppState.m */; };
+		A8C63C8D162BA08D0D098E2A /* TRAPIClient.m in Sources */ = {isa = PBXBuildFile; fileRef = A833870F2A05DC50EC6B1CB7 /* TRAPIClient.m */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		09D75E1C3EB7C0DDA9B22FE0 /* TRKeychainStore.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = TRKeychainStore.h; sourceTree = "<group>"; };
+		18C4A39128DC71A5037BCBFC /* TRRootViewController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = TRRootViewController.m; sourceTree = "<group>"; };
+		3181B2C1860134B1094F32C0 /* TRAPIClient.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = TRAPIClient.h; sourceTree = "<group>"; };
+		3FC5D1A6B76C8FF553E3C582 /* TRSceneDelegate.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = TRSceneDelegate.h; sourceTree = "<group>"; };
+		57BBF5CB53653168C2FD0E9C /* TRAppState.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = TRAppState.m; sourceTree = "<group>"; };
+		823618C557BF56EC1B45662B /* TraceMemoRemote.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = TraceMemoRemote.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		93442B6A449E9F2C48E99B41 /* TRAppDelegate.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = TRAppDelegate.h; sourceTree = "<group>"; };
+		9DC7F91E596EAA6F3F80A0E8 /* TRAppState.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = TRAppState.h; sourceTree = "<group>"; };
+		A833870F2A05DC50EC6B1CB7 /* TRAPIClient.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = TRAPIClient.m; sourceTree = "<group>"; };
+		B2006AAE77A1AEBD465DD5A4 /* TRKeychainStore.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = TRKeychainStore.m; sourceTree = "<group>"; };
+		BD92B9124A21B4220F389E3C /* TRRootViewController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = TRRootViewController.h; sourceTree = "<group>"; };
+		ECF3D3796E17BE93233D6D86 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		EE21F6D4CEC7384E31B31ECB /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
+		EE47B1C5646502B083BEEE25 /* TRAppDelegate.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = TRAppDelegate.m; sourceTree = "<group>"; };
+		F7D7AE7F789774AA3783EC2D /* TRSceneDelegate.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = TRSceneDelegate.m; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		30E041C53436E3893B32E15B = {
+			isa = PBXGroup;
+			children = (
+				FBAB8B081AC43C0D4E4EE328 /* TraceMemoRemote */,
+				A6E86BECAF86AB59810E0AFE /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A6E86BECAF86AB59810E0AFE /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				823618C557BF56EC1B45662B /* TraceMemoRemote.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		FBAB8B081AC43C0D4E4EE328 /* TraceMemoRemote */ = {
+			isa = PBXGroup;
+			children = (
+				ECF3D3796E17BE93233D6D86 /* Info.plist */,
+				EE21F6D4CEC7384E31B31ECB /* main.m */,
+				3181B2C1860134B1094F32C0 /* TRAPIClient.h */,
+				A833870F2A05DC50EC6B1CB7 /* TRAPIClient.m */,
+				93442B6A449E9F2C48E99B41 /* TRAppDelegate.h */,
+				EE47B1C5646502B083BEEE25 /* TRAppDelegate.m */,
+				9DC7F91E596EAA6F3F80A0E8 /* TRAppState.h */,
+				57BBF5CB53653168C2FD0E9C /* TRAppState.m */,
+				09D75E1C3EB7C0DDA9B22FE0 /* TRKeychainStore.h */,
+				B2006AAE77A1AEBD465DD5A4 /* TRKeychainStore.m */,
+				BD92B9124A21B4220F389E3C /* TRRootViewController.h */,
+				18C4A39128DC71A5037BCBFC /* TRRootViewController.m */,
+				3FC5D1A6B76C8FF553E3C582 /* TRSceneDelegate.h */,
+				F7D7AE7F789774AA3783EC2D /* TRSceneDelegate.m */,
+			);
+			path = TraceMemoRemote;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		BC6681D3DC1F5D986CC40B39 /* TraceMemoRemote */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 369670EF54D4DC677AD97B21 /* Build configuration list for PBXNativeTarget "TraceMemoRemote" */;
+			buildPhases = (
+				3A710E346AD1F563EFF7BFB5 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = TraceMemoRemote;
+			packageProductDependencies = (
+			);
+			productName = TraceMemoRemote;
+			productReference = 823618C557BF56EC1B45662B /* TraceMemoRemote.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A86526111F26DCEC7E5E6B5D /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					BC6681D3DC1F5D986CC40B39 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 6081EE8E8371D6EB5E5DFFDD /* Build configuration list for PBXProject "TraceMemoRemote" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 30E041C53436E3893B32E15B;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = A6E86BECAF86AB59810E0AFE /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				BC6681D3DC1F5D986CC40B39 /* TraceMemoRemote */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		3A710E346AD1F563EFF7BFB5 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A8C63C8D162BA08D0D098E2A /* TRAPIClient.m in Sources */,
+				7D9A542893F204C00F454F22 /* TRAppDelegate.m in Sources */,
+				7FA1B0C053C12593941E0369 /* TRAppState.m in Sources */,
+				695D93CA2BA946124F1E0848 /* TRKeychainStore.m in Sources */,
+				74D915B1C0C41AFB30957ABD /* TRRootViewController.m in Sources */,
+				2857A161B8014F0B648526D3 /* TRSceneDelegate.m in Sources */,
+				532C3454D3784E7B6A5654A2 /* main.m in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		0E045F4DBAEA9F8A280E2AFF /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				INFOPLIST_FILE = TraceMemoRemote/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.wxauto.TraceMemoRemote;
+				PRODUCT_NAME = TraceMemoRemote;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		33130520DA8CC249F13AFB40 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		65D87EBAA704F88C5DE6BC11 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		CCA7C6D57727B4263A111712 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				INFOPLIST_FILE = TraceMemoRemote/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.wxauto.TraceMemoRemote;
+				PRODUCT_NAME = TraceMemoRemote;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		369670EF54D4DC677AD97B21 /* Build configuration list for PBXNativeTarget "TraceMemoRemote" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0E045F4DBAEA9F8A280E2AFF /* Debug */,
+				CCA7C6D57727B4263A111712 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		6081EE8E8371D6EB5E5DFFDD /* Build configuration list for PBXProject "TraceMemoRemote" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				33130520DA8CC249F13AFB40 /* Debug */,
+				65D87EBAA704F88C5DE6BC11 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A86526111F26DCEC7E5E6B5D /* Project object */;
+}

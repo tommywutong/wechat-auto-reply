@@ -28,7 +28,8 @@ bash scripts/run-macos-app.sh
 基于大语言模型的微信自动回复系统。通过一套可配置的人设与应对策略生成回复，
 而非关键词匹配，因此能够处理未预设的对话内容。
 
-支持 Android 与 macOS 双端部署，两端共用同一套决策逻辑与安全约束。
+支持 Android、macOS 与 iPhone 控制端。Android 与 macOS 可以独立运行，iPhone 端只作为
+Mac 服务的局域网遥控器，不直接读取或操作微信。
 
 > **面向非技术用户的图文步骤：[新手指南.md](新手指南.md)**
 > 本文档面向需要了解实现细节或修改代码的读者。
@@ -118,7 +119,8 @@ xAI 公开提示词的行为描述进行本地适配，来源和许可证见
 | **网络与数据** | 关键词模式可完全离线；AI 模式从手机直连所选模型或中继服务 | 消息、日志和配置留在 Mac；AI 请求从 Mac 发出，凭据放在 macOS Keychain |
 | **适合场景** | 没有常开电脑、希望手机独立运行 | iPhone 用户、需要更完整消息、希望用桌面控制面板管理服务 |
 
-简单选择：没有 Mac 就用 Android；有 Mac 且希望代理 iPhone 上的同一个微信号，优先用 macOS。
+简单选择：没有 Mac 就用 Android；有 Mac 且希望代理 iPhone 上的同一个微信号，优先用 macOS；
+需要在 iPhone 上查看和控制 Mac 时，再安装 [`ios/companion/`](ios/companion/)。
 
 ## 系统要求
 
@@ -419,6 +421,16 @@ docs/                 部署、多账号、iOS 可行性分析
 | **macOS 代理（推荐）** | 否 | 完整，不占用手机 | [`macos/`](macos/) |
 
 完整分析见 [`docs/ios-feasibility.md`](docs/ios-feasibility.md)。
+
+### iPhone 控制端
+
+仓库还提供一个 Objective-C/UIKit 控制端，用来在 iPhone 上查看 Mac 服务状态、日志、白名单
+和部分自动回复设置，并远程启动、停止或重启 Mac 服务。它不是微信插件，不读取 iPhone 上的
+微信，也不能在 Mac 关机时独立回复。
+
+构建和配对说明见 [`ios/companion/README.md`](ios/companion/README.md)。Mac 端先执行
+`bash scripts/install-tracememo-control.sh`，把终端显示的 Mac `.local` 地址和一次性配对码填入
+iPhone App。控制服务使用独立令牌，不复用微信或模型密钥。
 
 ## 开发与测试
 

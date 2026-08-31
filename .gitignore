@@ -13,6 +13,7 @@ core/config.yaml          # 个人规则，含联系人姓名，不入库
 var/poll-interval
 dist/
 macos/TraceMemoAutoReplyApp/.build/
+/.build/
 ios/companion/TraceMemoRemote.xcodeproj/xcuserdata/
 ios/companion/TraceMemoRemote.xcodeproj/project.xcworkspace/xcuserdata/
 var/control-token

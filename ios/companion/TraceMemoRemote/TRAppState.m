@@ -50,19 +50,22 @@ NSNotificationName const TRAppStateDidChangeNotification = @"TRAppStateDidChange
 - (void)notifyChanged { [[NSNotificationCenter defaultCenter] postNotificationName:TRAppStateDidChangeNotification object:self]; }
 
 - (void)pairWithCode:(NSString *)code completion:(void (^)(NSError * _Nullable))completion {
-    [self.client pairWithCode:code completion:^(NSDictionary *payload, NSError *error) {
-        if (error) { self.lastError = error.localizedDescription; completion(error); return; }
-        NSString *token = [payload[@"token"] isKindOfClass:NSString.class] ? payload[@"token"] : nil;
-        if (token.length == 0 || ![TRKeychainStore setString:token forKey:@"control-token"]) {
-            NSError *saveError = [NSError errorWithDomain:@"com.wxauto.TraceMemoRemote" code:2 userInfo:@{NSLocalizedDescriptionKey: @"配对成功，但无法保存控制凭据"}];
-            self.lastError = saveError.localizedDescription;
-            completion(saveError);
-            return;
-        }
-        self.token = token;
-        self.lastError = @"";
-        [self notifyChanged];
-        completion(nil);
+    [self.client fetchHealth:^(NSDictionary *health, NSError *healthError) {
+        if (healthError) { self.lastError = healthError.localizedDescription; completion(healthError); return; }
+        [self.client pairWithCode:code completion:^(NSDictionary *payload, NSError *error) {
+            if (error) { self.lastError = error.localizedDescription; completion(error); return; }
+            NSString *token = [payload[@"token"] isKindOfClass:NSString.class] ? payload[@"token"] : nil;
+            if (token.length == 0 || ![TRKeychainStore setString:token forKey:@"control-token"]) {
+                NSError *saveError = [NSError errorWithDomain:@"com.wxauto.TraceMemoRemote" code:2 userInfo:@{NSLocalizedDescriptionKey: @"配对成功，但无法保存控制凭据"}];
+                self.lastError = saveError.localizedDescription;
+                completion(saveError);
+                return;
+            }
+            self.token = token;
+            self.lastError = @"";
+            [self notifyChanged];
+            completion(nil);
+        }];
     }];
 }
 

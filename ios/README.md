@@ -34,4 +34,7 @@ python ios/appium/wechat_ios_bot.py --dry-run
 替代 Mac 端的 TraceMemo 轮询器和微信发送器。构建与局域网配对步骤见
 [`companion/README.md`](companion/README.md)。
 
+从仓库根目录执行 `bash scripts/build-ios-companion.sh` 可生成模拟器包，并在签名条件具备时
+导出 iPhone 用的 `dist/TraceMemoRemote.ipa`。
+
 路线比较、限制和风险见 [`../docs/ios-feasibility.md`](../docs/ios-feasibility.md)。Agent 修改本模块前应读取 [`MEMORY.md`](MEMORY.md)。

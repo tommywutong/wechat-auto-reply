@@ -29,6 +29,7 @@ static NSString * const TRKeychainService = @"com.wxauto.TraceMemoRemote";
     OSStatus status = SecItemUpdate((__bridge CFDictionaryRef)query, (__bridge CFDictionaryRef)attributes);
     if (status == errSecItemNotFound) {
         query[(__bridge id)kSecValueData] = data;
+        query[(__bridge id)kSecAttrAccessible] = (__bridge id)kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly;
         status = SecItemAdd((__bridge CFDictionaryRef)query, NULL);
     }
     return status == errSecSuccess;

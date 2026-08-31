@@ -18,6 +18,10 @@
 @property (nonatomic, strong) UITextView *allowListView;
 @property (nonatomic, strong) UITextView *toneView;
 @property (nonatomic, strong) NSTimer *refreshTimer;
+@property (nonatomic, strong) NSArray<UIButton *> *serviceButtons;
+@property (nonatomic, strong) NSArray<UIButton *> *connectionButtons;
+@property (nonatomic, strong) UIButton *saveSettingsButton;
+@property (nonatomic, assign) BOOL requestInFlight;
 @end
 
 static UIColor *TRTint(void) { return [UIColor colorWithRed:0.08 green:0.48 blue:0.36 alpha:1.0]; }
@@ -39,6 +43,7 @@ static UIColor *TRTint(void) { return [UIColor colorWithRed:0.08 green:0.48 blue
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
     [self refresh];
+    [self.refreshTimer invalidate];
     self.refreshTimer = [NSTimer scheduledTimerWithTimeInterval:8.0 target:self selector:@selector(refresh) userInfo:nil repeats:YES];
 }
 
@@ -106,6 +111,7 @@ static UIColor *TRTint(void) { return [UIColor colorWithRed:0.08 green:0.48 blue
     serviceButtons.spacing = 10;
     for (UIButton *button in serviceButtons.arrangedSubviews) [button.widthAnchor constraintGreaterThanOrEqualToConstant:86].active = YES;
     [self.stack addArrangedSubview:serviceButtons];
+    self.serviceButtons = [serviceButtons.arrangedSubviews copy];
 
     [self addSectionTitle:@"自动回复设置"];
     [self.stack addArrangedSubview:[self label:@"轮询间隔（秒）" font:nil color:[UIColor secondaryLabelColor]]];
@@ -117,12 +123,14 @@ static UIColor *TRTint(void) { return [UIColor colorWithRed:0.08 green:0.48 blue
     [self.stack addArrangedSubview:[self label:@"回复风格补充说明" font:nil color:[UIColor secondaryLabelColor]]];
     self.toneView = [self textView:@"例如：简短、口语化，不主动承诺做不到的事情" height:92];
     [self.stack addArrangedSubview:self.toneView];
-    [self.stack addArrangedSubview:[self button:@"保存设置并重启服务" action:@selector(saveSettings)]];
+    self.saveSettingsButton = [self button:@"保存设置并重启服务" action:@selector(saveSettings)];
+    [self.stack addArrangedSubview:self.saveSettingsButton];
 
     [self addSectionTitle:@"运行日志"];
     self.logsView = [self textView:@"暂无日志" height:220];
     self.logsView.editable = NO;
     self.logsView.font = [UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightRegular];
+    self.logsView.accessibilityLabel = @"运行日志";
     [self.stack addArrangedSubview:self.logsView];
     self.errorLabel = [self label:@"" font:[UIFont preferredFontForTextStyle:UIFontTextStyleFootnote] color:[UIColor systemRedColor]];
     self.errorLabel.numberOfLines = 0;
@@ -130,16 +138,20 @@ static UIColor *TRTint(void) { return [UIColor colorWithRed:0.08 green:0.48 blue
 }
 
 - (void)buildConnectionForm {
-    self.hostField = [self field:self.state.host.length ? self.state.host : @"Mac 地址，例如 MacBook.local 或 192.168.1.8" keyboard:UIKeyboardTypeURL];
-    self.portField = [self field:self.state.port ? [NSString stringWithFormat:@"%ld", (long)self.state.port] : @"8850" keyboard:UIKeyboardTypeNumberPad];
+    self.hostField = [self field:@"Mac 地址，例如 MacBook.local 或 192.168.1.8" keyboard:UIKeyboardTypeURL];
+    self.hostField.text = self.state.host ?: @"";
+    self.portField = [self field:@"端口，默认 8850" keyboard:UIKeyboardTypeNumberPad];
+    self.portField.text = self.state.port > 0 ? [NSString stringWithFormat:@"%ld", (long)self.state.port] : @"8850";
     self.pairingField = [self field:@"配对码（Mac 端安装时显示）" keyboard:UIKeyboardTypeASCIICapable];
     [self.stack addArrangedSubview:self.hostField];
     [self.stack addArrangedSubview:self.portField];
     [self.stack addArrangedSubview:self.pairingField];
-    [self.stack addArrangedSubview:[self button:@"连接并保存" action:@selector(pair)]];
+    UIButton *pair = [self button:@"连接并保存" action:@selector(pair)];
+    [self.stack addArrangedSubview:pair];
     UIButton *disconnect = [self button:@"断开当前 Mac" action:@selector(disconnect)];
     disconnect.tintColor = [UIColor systemRedColor];
     [self.stack addArrangedSubview:disconnect];
+    self.connectionButtons = @[pair, disconnect];
 }
 
 - (void)addSectionTitle:(NSString *)title {
@@ -213,10 +225,10 @@ static UIColor *TRTint(void) { return [UIColor colorWithRed:0.08 green:0.48 blue
     self.traceMemoLabel.text = [NSString stringWithFormat:@"控制服务：%@", connected ? @"已连接" : @"未连接"];
     NSDictionary *config = self.state.config;
     if (config.count > 0) {
-        self.pollIntervalField.text = [NSString stringWithFormat:@"%@", config[@"pollInterval"] ?: @"5"];
+        if (!self.pollIntervalField.isFirstResponder) self.pollIntervalField.text = [NSString stringWithFormat:@"%@", config[@"pollInterval"] ?: @"5"];
         NSArray *allow = [config[@"allowContacts"] isKindOfClass:NSArray.class] ? config[@"allowContacts"] : @[];
-        self.allowListView.text = [allow componentsJoinedByString:@", "];
-        self.toneView.text = [config[@"personaTone"] isKindOfClass:NSString.class] ? config[@"personaTone"] : @"";
+        if (!self.allowListView.isFirstResponder) self.allowListView.text = [allow componentsJoinedByString:@", "];
+        if (!self.toneView.isFirstResponder) self.toneView.text = [config[@"personaTone"] isKindOfClass:NSString.class] ? config[@"personaTone"] : @"";
     }
     self.logsView.text = self.state.logs.count ? [self.state.logs componentsJoinedByString:@"\n"] : @"暂无日志";
     if (self.logsView.text.length > 0) [self.logsView scrollRangeToVisible:NSMakeRange(self.logsView.text.length - 1, 1)];
@@ -231,22 +243,35 @@ static UIColor *TRTint(void) { return [UIColor colorWithRed:0.08 green:0.48 blue
 }
 
 - (void)pair {
+    if (self.requestInFlight) return;
     NSString *host = [self.hostField.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    NSInteger port = self.portField.text.integerValue ?: 8850;
+    NSInteger port = self.portField.text.integerValue;
+    if (port == 0 && self.portField.text.length == 0) port = 8850;
     NSString *code = [self.pairingField.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (host.length == 0 || code.length == 0) { self.errorLabel.text = @"请填写 Mac 地址和配对码。"; return; }
+    if (port < 1 || port > 65535) { self.errorLabel.text = @"端口必须在 1 到 65535 之间。"; return; }
     self.state.host = host;
     self.state.port = port;
+    [self.view endEditing:YES];
     self.errorLabel.text = @"正在连接…";
+    self.requestInFlight = YES;
+    [self setControlsEnabled:NO];
     [self.state pairWithCode:code completion:^(NSError *error) {
+        self.requestInFlight = NO;
+        [self setControlsEnabled:YES];
         self.errorLabel.text = error.localizedDescription ?: @"已连接 Mac。";
         if (!error) { self.pairingField.text = @""; [self refresh]; }
     }];
 }
 
-- (void)disconnect { [self.state disconnect]; [self refreshUI]; }
+- (void)disconnect {
+    if (self.requestInFlight) return;
+    [self.state disconnect];
+    [self refreshUI];
+}
 - (void)startService { [self action:@"start"]; }
 - (void)stopService {
+    if (self.requestInFlight) return;
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"停止自动回复？"
                                                                        message:@"停止后，Mac 将不再轮询或发送新的自动回复。"
                                                                 preferredStyle:UIAlertControllerStyleAlert];
@@ -259,13 +284,19 @@ static UIColor *TRTint(void) { return [UIColor colorWithRed:0.08 green:0.48 blue
 - (void)restartService { [self action:@"restart"]; }
 
 - (void)action:(NSString *)action {
+    if (self.requestInFlight) return;
+    self.requestInFlight = YES;
+    [self setControlsEnabled:NO];
     [self.state serviceAction:action completion:^(NSError *error) {
+        self.requestInFlight = NO;
+        [self setControlsEnabled:YES];
         self.errorLabel.text = error.localizedDescription ?: @"操作完成";
         [self refreshUI];
     }];
 }
 
 - (void)saveSettings {
+    if (self.requestInFlight) return;
     NSInteger poll = MAX(5, MIN(self.pollIntervalField.text.integerValue ?: 5, 300));
     NSMutableArray *allow = [NSMutableArray array];
     for (NSString *part in [self.allowListView.text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {
@@ -279,11 +310,28 @@ static UIColor *TRTint(void) { return [UIColor colorWithRed:0.08 green:0.48 blue
         @"allowContacts": allow,
         @"personaTone": self.toneView.text ?: @""
     };
+    [self.view endEditing:YES];
     self.errorLabel.text = @"正在保存并重启…";
+    self.requestInFlight = YES;
+    [self setControlsEnabled:NO];
     [self.state updateConfig:values completion:^(NSError *error) {
+        self.requestInFlight = NO;
+        [self setControlsEnabled:YES];
         self.errorLabel.text = error.localizedDescription ?: @"设置已保存，服务已重启。";
         [self refreshUI];
     }];
+}
+
+- (void)setControlsEnabled:(BOOL)enabled {
+    self.hostField.enabled = enabled;
+    self.portField.enabled = enabled;
+    self.pairingField.enabled = enabled;
+    self.pollIntervalField.enabled = enabled;
+    self.allowListView.editable = enabled;
+    self.toneView.editable = enabled;
+    self.saveSettingsButton.enabled = enabled;
+    for (UIButton *button in self.connectionButtons) button.enabled = enabled;
+    for (UIButton *button in self.serviceButtons) button.enabled = enabled;
 }
 
 @end

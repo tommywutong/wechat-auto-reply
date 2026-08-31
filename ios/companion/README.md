@@ -20,6 +20,25 @@ xcodebuild -project TraceMemoRemote.xcodeproj \
 真机运行需要在 Xcode 中选择自己的 Apple Developer Team 并签名。首版不需要推送证书，
 打开 App 时主动刷新状态和日志。
 
+## 打包
+
+仓库提供统一脚本：
+
+```bash
+cd ../.. && bash scripts/build-ios-companion.sh
+```
+
+脚本会先生成 `dist/TraceMemoRemote-simulator.app`，再尝试用本机 Apple 账号归档并导出
+`dist/TraceMemoRemote.ipa`。只有账号已登录、Bundle ID 可用且 provisioning profile 能被
+Xcode 自动取得时，IPA 才能安装到已注册的 iPhone。缺少这些条件时，会保留
+`dist/TraceMemoRemote-unsigned.xcarchive` 和构建日志，不会把未签名文件误称为可安装包。
+
+可通过环境变量覆盖构建参数，例如：
+
+```bash
+DEVELOPMENT_TEAM=你的 Team ID bash scripts/build-ios-companion.sh
+```
+
 ## 配对
 
 在 Mac 上执行：

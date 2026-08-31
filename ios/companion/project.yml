@@ -14,8 +14,25 @@ targets:
     deploymentTarget: "16.0"
     sources:
       - path: TraceMemoRemote
+    resources:
+      - path: TraceMemoRemote/Assets.xcassets
+      - path: TraceMemoRemote/LaunchScreen.storyboard
     info:
       path: TraceMemoRemote/Info.plist
+      properties:
+        CFBundleDisplayName: TraceMemo 控制台
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        UILaunchStoryboardName: LaunchScreen
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        NSLocalNetworkUsageDescription: 用于连接同一局域网中的 Mac 自动回复服务。
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+          UISceneConfigurations:
+            UIWindowSceneSessionRoleApplication:
+              - UISceneConfigurationName: Default Configuration
+                UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).TRSceneDelegate
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.wxauto.TraceMemoRemote

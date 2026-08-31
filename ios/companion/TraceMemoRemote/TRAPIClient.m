@@ -14,7 +14,7 @@ static BOOL TRIsPrivateIPv4(NSString *host) {
     NSInteger octets[4];
     for (NSUInteger index = 0; index < parts.count; index++) {
         NSString *part = parts[index];
-        if (part.length == 0 || part.length > 3) return NO;
+        if (part.length == 0 || part.length > 3 || [part rangeOfCharacterFromSet:[[NSCharacterSet decimalDigitCharacterSet] invertedSet]].location != NSNotFound) return NO;
         NSScanner *scanner = [NSScanner scannerWithString:part];
         NSInteger value = -1;
         if (![scanner scanInteger:&value] || !scanner.isAtEnd || value < 0 || value > 255) return NO;
@@ -27,7 +27,8 @@ static BOOL TRIsPrivateIPv4(NSString *host) {
 }
 
 static BOOL TRIsAllowedHost(NSString *host) {
-    if ([host hasSuffix:@".local"] && host.length > 6 && [host rangeOfString:@".."].location == NSNotFound) {
+    NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyz0123456789.-"];
+    if ([host hasSuffix:@".local"] && host.length > 6 && [host rangeOfString:@".."].location == NSNotFound && [host rangeOfCharacterFromSet:[allowed invertedSet]].location == NSNotFound) {
         return YES;
     }
     return TRIsPrivateIPv4(host);
@@ -53,7 +54,7 @@ static BOOL TRIsAllowedHost(NSString *host) {
     safeHost = [[safeHost componentsSeparatedByString:@"/"] firstObject];
     safeHost = [safeHost lowercaseString];
     // 控制令牌只允许发到 Bonjour .local 或 RFC1918 链路地址，不能因输错地址发往公网。
-    if (!TRIsAllowedHost(safeHost)) {
+    if (self.port < 1 || self.port > 65535 || !TRIsAllowedHost(safeHost)) {
         return nil;
     }
     NSString *urlString = [NSString stringWithFormat:@"http://%@:%ld%@", safeHost, (long)self.port, path];
@@ -96,6 +97,10 @@ static BOOL TRIsAllowedHost(NSString *host) {
         dispatch_async(dispatch_get_main_queue(), ^{ completion(payload ?: @{}, nil); });
     }];
     [task resume];
+}
+
+- (void)fetchHealth:(TRAPICompletion)completion {
+    [self request:@"GET" path:@"/health" body:nil completion:completion];
 }
 
 - (void)pairWithCode:(NSString *)code completion:(TRAPICompletion)completion {

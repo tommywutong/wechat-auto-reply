@@ -11,6 +11,7 @@ typedef void (^TRAPICompletion)(NSDictionary * _Nullable payload, NSError * _Nul
 @property (nonatomic, copy, readonly) NSString *token;
 
 - (instancetype)initWithHost:(NSString *)host port:(NSInteger)port token:(NSString *)token;
+- (void)fetchHealth:(TRAPICompletion)completion;
 - (void)pairWithCode:(NSString *)code completion:(TRAPICompletion)completion;
 - (void)fetchStatus:(TRAPICompletion)completion;
 - (void)fetchLogs:(NSInteger)limit completion:(TRAPICompletion)completion;

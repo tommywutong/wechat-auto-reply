@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0A8983E32A644DEEA4A22C4A /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 840D0938672B4E8A5594856E /* LaunchScreen.storyboard */; };
 		2857A161B8014F0B648526D3 /* TRSceneDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = F7D7AE7F789774AA3783EC2D /* TRSceneDelegate.m */; };
 		532C3454D3784E7B6A5654A2 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = EE21F6D4CEC7384E31B31ECB /* main.m */; };
 		695D93CA2BA946124F1E0848 /* TRKeychainStore.m in Sources */ = {isa = PBXBuildFile; fileRef = B2006AAE77A1AEBD465DD5A4 /* TRKeychainStore.m */; };
@@ -14,6 +15,7 @@
 		7D9A542893F204C00F454F22 /* TRAppDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = EE47B1C5646502B083BEEE25 /* TRAppDelegate.m */; };
 		7FA1B0C053C12593941E0369 /* TRAppState.m in Sources */ = {isa = PBXBuildFile; fileRef = 57BBF5CB53653168C2FD0E9C /* TRAppState.m */; };
 		A8C63C8D162BA08D0D098E2A /* TRAPIClient.m in Sources */ = {isa = PBXBuildFile; fileRef = A833870F2A05DC50EC6B1CB7 /* TRAPIClient.m */; };
+		F7D0240ACE21E0FC4C8E9C73 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = EBF7C187DD3E0FBCB2AA186C /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -23,11 +25,13 @@
 		3FC5D1A6B76C8FF553E3C582 /* TRSceneDelegate.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = TRSceneDelegate.h; sourceTree = "<group>"; };
 		57BBF5CB53653168C2FD0E9C /* TRAppState.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = TRAppState.m; sourceTree = "<group>"; };
 		823618C557BF56EC1B45662B /* TraceMemoRemote.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = TraceMemoRemote.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		840D0938672B4E8A5594856E /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 		93442B6A449E9F2C48E99B41 /* TRAppDelegate.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = TRAppDelegate.h; sourceTree = "<group>"; };
 		9DC7F91E596EAA6F3F80A0E8 /* TRAppState.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = TRAppState.h; sourceTree = "<group>"; };
 		A833870F2A05DC50EC6B1CB7 /* TRAPIClient.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = TRAPIClient.m; sourceTree = "<group>"; };
 		B2006AAE77A1AEBD465DD5A4 /* TRKeychainStore.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = TRKeychainStore.m; sourceTree = "<group>"; };
 		BD92B9124A21B4220F389E3C /* TRRootViewController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = TRRootViewController.h; sourceTree = "<group>"; };
+		EBF7C187DD3E0FBCB2AA186C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		ECF3D3796E17BE93233D6D86 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		EE21F6D4CEC7384E31B31ECB /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
 		EE47B1C5646502B083BEEE25 /* TRAppDelegate.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = TRAppDelegate.m; sourceTree = "<group>"; };
@@ -54,7 +58,9 @@
 		FBAB8B081AC43C0D4E4EE328 /* TraceMemoRemote */ = {
 			isa = PBXGroup;
 			children = (
+				EBF7C187DD3E0FBCB2AA186C /* Assets.xcassets */,
 				ECF3D3796E17BE93233D6D86 /* Info.plist */,
+				840D0938672B4E8A5594856E /* LaunchScreen.storyboard */,
 				EE21F6D4CEC7384E31B31ECB /* main.m */,
 				3181B2C1860134B1094F32C0 /* TRAPIClient.h */,
 				A833870F2A05DC50EC6B1CB7 /* TRAPIClient.m */,
@@ -80,6 +86,7 @@
 			buildConfigurationList = 369670EF54D4DC677AD97B21 /* Build configuration list for PBXNativeTarget "TraceMemoRemote" */;
 			buildPhases = (
 				3A710E346AD1F563EFF7BFB5 /* Sources */,
+				7369DC8FCE40AF11469F1A90 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -125,6 +132,18 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		7369DC8FCE40AF11469F1A90 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F7D0240ACE21E0FC4C8E9C73 /* Assets.xcassets in Resources */,
+				0A8983E32A644DEEA4A22C4A /* LaunchScreen.storyboard in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		3A710E346AD1F563EFF7BFB5 /* Sources */ = {

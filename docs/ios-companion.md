@@ -36,6 +36,13 @@ Keychain；后续请求统一使用 `Authorization: Bearer`。不要把端口映
 首次连接时，iPhone 会请求“本地网络”权限。请允许；若 macOS 防火墙弹出入站连接提示，也要
 允许本项目的 Python 控制服务接受局域网连接。
 
+## 打包和安装
+
+在仓库根目录运行 `bash scripts/build-ios-companion.sh`。脚本会生成模拟器包，并根据本机
+Apple 开发者账号和 provisioning profile 是否可用，尝试导出 `dist/TraceMemoRemote.ipa`。
+开发签名 IPA 只能安装到已注册的设备；没有签名条件时的 `.xcarchive` 仅供后续在 Xcode
+中重新签名，不能直接安装。iOS 不允许像 APK 一样把一个未签名包直接发给任意手机。
+
 ## 当前能力
 
 - 查看规则服务、自动回复服务和控制服务状态。

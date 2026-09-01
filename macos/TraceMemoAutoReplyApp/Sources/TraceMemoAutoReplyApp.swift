@@ -786,8 +786,14 @@ struct ServiceOperation: Equatable {
 enum ServiceController {
     static func domain() -> String { "gui/\(getuid())" }
 
+    static func target(label: String) -> String { "\(domain())/\(label)" }
+
+    static func enableArguments(label: String) -> [String] {
+        ["enable", target(label: label)]
+    }
+
     static func status(label: String = AppPaths.serviceLabel) -> ServiceState {
-        let result = CommandRunner.run("/bin/launchctl", ["print", "\(domain())/\(label)"])
+        let result = CommandRunner.run("/bin/launchctl", ["print", target(label: label)])
         if result.status == 0 {
             let output = result.stdout.lowercased()
             if output.contains("state = running") || output.contains("pid = ") {
@@ -873,7 +879,7 @@ enum ServiceController {
             if status(label: label) == .notInstalled {
                 return CommandResult(status: 0, stdout: "", stderr: "")
             }
-            let result = CommandRunner.run("/bin/launchctl", ["bootout", "\(domain())/\(label)"])
+            let result = CommandRunner.run("/bin/launchctl", ["bootout", target(label: label)])
             if result.status == 0 || isInactive(status(label: label)) {
                 return CommandResult(status: 0, stdout: result.stdout, stderr: "")
             }
@@ -892,29 +898,54 @@ enum ServiceController {
 
     private static func startService(repoURL: URL, label: String, serviceName: String) -> CommandResult {
         let plist = plistURL(label: label)
-        if FileManager.default.fileExists(atPath: plist.path) {
-            let bootstrap = CommandRunner.run("/bin/launchctl", ["bootstrap", domain(), plist.path])
-            if bootstrap.status == 0 { return bootstrap }
-
-            // A loaded-but-exited job cannot be bootstrapped again. kickstart
-            // starts that job without using the force-restart flag.
-            let kickstart = CommandRunner.run("/bin/launchctl", ["kickstart", "\(domain())/\(label)"])
-            if kickstart.status == 0 { return kickstart }
-            let detail = kickstart.stderr.isEmpty
-                ? (bootstrap.stderr.isEmpty ? "launchd 未返回错误详情" : bootstrap.stderr)
-                : kickstart.stderr
-            return CommandResult(status: kickstart.status, stdout: kickstart.stdout, stderr: "\(serviceName)启动失败：\(detail)")
+        if !FileManager.default.fileExists(atPath: plist.path) {
+            let installation = installService(repoURL: repoURL, label: label, serviceName: serviceName)
+            guard installation.status == 0 else { return installation }
+            guard FileManager.default.fileExists(atPath: plist.path) else {
+                return CommandResult(status: 1, stdout: installation.stdout, stderr: "\(serviceName)启动失败：安装后仍找不到 launchd 配置。")
+            }
         }
 
-        guard label == AppPaths.serviceLabel else {
-            return CommandResult(
-                status: 1,
-                stdout: "",
-                stderr: "\(serviceName)启动失败：找不到 launchd 配置，请先运行 scripts/macos-setup.sh。"
-            )
+        // 用户或系统可能保留了“禁用”标记，即使 plist 还在，bootstrap 和 kickstart
+        // 也会失败。主动点击“启动”就是明确授权重新启用这一个用户域服务。
+        let enable = CommandRunner.run("/bin/launchctl", enableArguments(label: label))
+        guard enable.status == 0 else {
+            return withServiceContext(enable, serviceName: serviceName, action: .start)
         }
-        let install = repoURL.appendingPathComponent("scripts/install-tracememo-autoreply.sh")
-        let result = CommandRunner.run("/bin/bash", [install.path], cwd: repoURL)
+
+        let bootstrap = CommandRunner.run("/bin/launchctl", ["bootstrap", domain(), plist.path])
+        if bootstrap.status == 0 { return bootstrap }
+
+        // A loaded-but-exited job cannot be bootstrapped again. kickstart starts
+        // it without force-restarting. If that also fails, clear a stale entry and
+        // retry the current plist once before reporting the real launchd error.
+        let kickstart = CommandRunner.run("/bin/launchctl", ["kickstart", target(label: label)])
+        if kickstart.status == 0 { return kickstart }
+        _ = CommandRunner.run("/bin/launchctl", ["bootout", target(label: label)])
+        let retry = CommandRunner.run("/bin/launchctl", ["bootstrap", domain(), plist.path])
+        if retry.status == 0 { return retry }
+
+        let detail = retry.stderr.isEmpty
+            ? (kickstart.stderr.isEmpty ? (bootstrap.stderr.isEmpty ? "launchd 未返回错误详情" : bootstrap.stderr) : kickstart.stderr)
+            : retry.stderr
+        return CommandResult(status: retry.status, stdout: retry.stdout, stderr: "\(serviceName)启动失败：\(detail)")
+    }
+
+    private static func installService(repoURL: URL, label: String, serviceName: String) -> CommandResult {
+        let scriptName: String
+        switch label {
+        case AppPaths.engineServiceLabel:
+            scriptName = "macos-setup.sh"
+        case AppPaths.serviceLabel:
+            scriptName = "install-tracememo-autoreply.sh"
+        default:
+            return CommandResult(status: 1, stdout: "", stderr: "\(serviceName)启动失败：不支持的 launchd 服务。")
+        }
+        let script = repoURL.appendingPathComponent("scripts/\(scriptName)")
+        guard FileManager.default.isExecutableFile(atPath: script.path) else {
+            return CommandResult(status: 1, stdout: "", stderr: "\(serviceName)启动失败：缺少安装脚本 \(scriptName)。")
+        }
+        let result = CommandRunner.run("/bin/bash", [script.path], cwd: repoURL)
         return result.status == 0 ? result : withServiceContext(result, serviceName: serviceName, action: .start)
     }
 

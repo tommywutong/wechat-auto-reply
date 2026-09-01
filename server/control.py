@@ -214,8 +214,9 @@ def _service_action(action: str) -> tuple[bool, str]:
     if action in {"start", "restart"}:
         operations.extend(("bootstrap", label) for label in reversed(labels))
     for operation, label in operations:
+        target = f"{_launch_domain()}/{label}"
         if operation == "bootout":
-            _run(["/bin/launchctl", "bootout", f"{_launch_domain()}/{label}"])
+            _run(["/bin/launchctl", "bootout", target])
             continue
         plist = Path.home() / "Library" / "LaunchAgents" / f"{label}.plist"
         if not plist.exists():
@@ -225,9 +226,12 @@ def _service_action(action: str) -> tuple[bool, str]:
                     return False, stderr.strip() or "自动回复服务未安装"
                 continue
             return False, f"缺少 {label} 的 launchd 配置"
+        status, _, stderr = _run(["/bin/launchctl", "enable", target])
+        if status != 0:
+            return False, stderr.strip() or f"无法重新启用 {label}"
         status, _, stderr = _run(["/bin/launchctl", "bootstrap", _launch_domain(), str(plist)])
         if status != 0 and _service_state(label) != "running":
-            kick_status, _, kick_err = _run(["/bin/launchctl", "kickstart", f"{_launch_domain()}/{label}"])
+            kick_status, _, kick_err = _run(["/bin/launchctl", "kickstart", target])
             if kick_status != 0:
                 return False, kick_err.strip() or stderr.strip() or f"{label} 启动失败"
     return True, ""

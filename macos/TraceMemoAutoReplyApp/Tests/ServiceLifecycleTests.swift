@@ -58,4 +58,15 @@ final class ServiceLifecycleTests: XCTestCase {
             ]
         )
     }
+
+    func testStartEnablesTheUserScopedLaunchdLabelsFirst() {
+        XCTAssertEqual(
+            ServiceController.enableArguments(label: AppPaths.engineServiceLabel),
+            ["enable", ServiceController.target(label: AppPaths.engineServiceLabel)]
+        )
+        XCTAssertEqual(
+            ServiceController.enableArguments(label: AppPaths.serviceLabel),
+            ["enable", ServiceController.target(label: AppPaths.serviceLabel)]
+        )
+    }
 }

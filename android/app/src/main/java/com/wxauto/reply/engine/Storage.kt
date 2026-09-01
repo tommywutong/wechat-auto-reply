@@ -256,36 +256,38 @@ object Storage {
      *
      * 稳定 talker、Token、完整聊天记录和任意未知字段都不接受。
      */
-    fun importStyleProfiles(raw: String): StyleProfileImportResult = try {
-        val root = JSONObject(raw)
-        val rootKeys = root.keys().asSequence().toSet()
-        if (rootKeys != setOf("version", "profiles")) {
-            return StyleProfileImportResult(emptyList(), "画像文件字段不正确，只能包含 version 和 profiles")
-        }
-        if (root.optInt("version", -1) != 1) {
-            return StyleProfileImportResult(emptyList(), "不支持这个画像文件版本")
-        }
-        val array = root.optJSONArray("profiles")
-            ?: return StyleProfileImportResult(emptyList(), "画像文件缺少 profiles")
-        if (array.length() > MAX_STYLE_PROFILES) {
-            return StyleProfileImportResult(emptyList(), "画像数量超过 $MAX_STYLE_PROFILES 条上限")
-        }
-
-        val profiles = ArrayList<StyleProfile>(array.length())
-        val names = HashSet<String>()
-        for (index in 0 until array.length()) {
-            val profile = array.optJSONObject(index)
-                ?: return StyleProfileImportResult(emptyList(), "第 ${index + 1} 条画像不是对象")
-            val parsed = parseStyleProfile(profile, strict = true)
-                ?: return StyleProfileImportResult(emptyList(), "第 ${index + 1} 条画像格式不正确")
-            if (!names.add(normalizeChatName(parsed.displayName))) {
-                return StyleProfileImportResult(emptyList(), "画像中有重复的会话显示名")
+    fun importStyleProfiles(raw: String): StyleProfileImportResult {
+        return try {
+            val root = JSONObject(raw)
+            val rootKeys = root.keys().asSequence().toSet()
+            if (rootKeys != setOf("version", "profiles")) {
+                return StyleProfileImportResult(emptyList(), "画像文件字段不正确，只能包含 version 和 profiles")
             }
-            profiles += parsed
+            if (root.optInt("version", -1) != 1) {
+                return StyleProfileImportResult(emptyList(), "不支持这个画像文件版本")
+            }
+            val array = root.optJSONArray("profiles")
+                ?: return StyleProfileImportResult(emptyList(), "画像文件缺少 profiles")
+            if (array.length() > MAX_STYLE_PROFILES) {
+                return StyleProfileImportResult(emptyList(), "画像数量超过 $MAX_STYLE_PROFILES 条上限")
+            }
+
+            val profiles = ArrayList<StyleProfile>(array.length())
+            val names = HashSet<String>()
+            for (index in 0 until array.length()) {
+                val profile = array.optJSONObject(index)
+                    ?: return StyleProfileImportResult(emptyList(), "第 ${index + 1} 条画像不是对象")
+                val parsed = parseStyleProfile(profile, strict = true)
+                    ?: return StyleProfileImportResult(emptyList(), "第 ${index + 1} 条画像格式不正确")
+                if (!names.add(normalizeChatName(parsed.displayName))) {
+                    return StyleProfileImportResult(emptyList(), "画像中有重复的会话显示名")
+                }
+                profiles += parsed
+            }
+            StyleProfileImportResult(profiles)
+        } catch (_: Exception) {
+            StyleProfileImportResult(emptyList(), "不是可读取的画像 JSON 文件")
         }
-        StyleProfileImportResult(profiles)
-    } catch (_: Exception) {
-        StyleProfileImportResult(emptyList(), "不是可读取的画像 JSON 文件")
     }
 
     private fun parseStyleProfile(object_: JSONObject, strict: Boolean = false): StyleProfile? {

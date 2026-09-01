@@ -98,6 +98,53 @@ enum class AiSource {
 
 data class AiExample(val them: String, val me: String)
 
+/** 从 Mac 画像导入的脱敏会话样本。只保存显示名，不保存稳定 talker 或凭据。 */
+data class StyleProfile(
+    val displayName: String,
+    val summary: String = "",
+    val examples: List<AiExample> = emptyList(),
+    val sampleCount: Int = 0,
+)
+
+/**
+ * 严格导入后的结果。画像是聊天数据的派生内容，拒绝未知字段比悄悄忽略更安全：
+ * 用户不会误以为某些个人数据已经导入，而未知字段也不会被我们原样留在手机里。
+ */
+data class StyleProfileImportResult(
+    val profiles: List<StyleProfile>,
+    val error: String? = null,
+)
+
+/** 只接受「@昵称」这个完整提及，避免把 @Loky2 错当作 @Loky。 */
+fun mentionsAnyNickname(text: String, nicknames: List<String>): Boolean {
+    val source = text.trim()
+    if (source.isEmpty()) return false
+    return nicknames.asSequence()
+        .map { it.trim().removePrefix("@").trim() }
+        .filter { it.isNotEmpty() }
+        .any { nickname ->
+            // 微信通知常以 U+2005 四分之一空格隔开 @昵称 与正文；Java 默认的 \s
+            // 未必覆盖它，因此显式列入边界。仍要求完整昵称，不能把 @Loky2 当作 @Loky。
+            Regex("@[\\s\\u00a0\\u2005]*${Regex.escape(nickname)}(?=[\\s\\u00a0\\u2005]|[,:，。？！!?、]|$)")
+                .containsMatchIn(source)
+        }
+}
+
+/**
+ * 解析设置页的 HH:mm 时段输入。空字符串明确表示“全天”，而非法输入返回 null。
+ *
+ * 不能把“09”或“25:00”悄悄当全天，否则一次笔误可能扩大自动回复的生效范围。
+ */
+fun parseTimeOfDay(value: String): Int? {
+    val raw = value.trim()
+    if (raw.isEmpty()) return -1
+    val parts = raw.split(":")
+    if (parts.size != 2) return null
+    val hour = parts[0].toIntOrNull() ?: return null
+    val minute = parts[1].toIntOrNull() ?: return null
+    return if (hour in 0..23 && minute in 0..59) hour * 60 + minute else null
+}
+
 /**
  * 人设与应对攻略。
  *
@@ -111,6 +158,8 @@ data class PersonaConfig(
     val boundaries: List<String> = emptyList(),
     val maxChars: Int = 35,
     val examples: List<AiExample> = emptyList(),
+    /** 可选的整体表达风格，例如 grok4_1。 */
+    val stylePreset: String = "",
 ) {
     /** 没写人设就别用 AI——空人设生成出来只会是客服腔。 */
     fun isConfigured(): Boolean = identity.isNotBlank() || playbook.isNotBlank()
@@ -129,7 +178,7 @@ data class EngineConfig(
     /** 总开关。关掉之后引擎对任何消息都返回「不回复」。 */
     val enabled: Boolean = false,
 
-    val signature: String = "（自动回复）",
+    val signature: String = "",
 
     /** 自动回复时段，单位是「距零点的分钟数」。都为 -1 表示全天。 */
     val activeFromMinute: Int = -1,
@@ -137,6 +186,9 @@ data class EngineConfig(
 
     val replyToPrivate: Boolean = true,
     val groupPolicy: GroupPolicy = GroupPolicy.ONLY_AT_ME,
+
+    /** 群聊中用于精确识别「@我」的微信昵称，可填多个历史昵称。 */
+    val selfNicknames: List<String> = emptyList(),
 
     /** 非空时只对这些人生效。 */
     val allowContacts: List<String> = emptyList(),
@@ -166,6 +218,8 @@ data class EngineConfig(
 
     val replyMode: ReplyMode = ReplyMode.KEYWORD,
     val persona: PersonaConfig = PersonaConfig(),
+    /** 从 Mac 导入的每个会话本地画像。 */
+    val styleProfiles: List<StyleProfile> = emptyList(),
     val ai: AiConfig = AiConfig(),
 
     val rules: List<Rule> = emptyList(),

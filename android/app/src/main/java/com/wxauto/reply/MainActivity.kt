@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
+import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.text.InputType
@@ -32,6 +33,7 @@ import com.wxauto.reply.engine.Message
 import com.wxauto.reply.engine.normalizeChatName
 import com.wxauto.reply.engine.OpenAiCompatibleWriter
 import com.wxauto.reply.engine.PersonaConfig
+import com.wxauto.reply.engine.parseTimeOfDay
 import com.wxauto.reply.engine.ReplyEngine
 import com.wxauto.reply.engine.ReplyMode
 import com.wxauto.reply.engine.Rule
@@ -55,6 +57,22 @@ class MainActivity : Activity() {
     private lateinit var testInput: EditText
     private lateinit var testResult: TextView
     private lateinit var testAsGroup: CheckBox
+    private lateinit var selfNicknamesField: EditText
+    private lateinit var blockKeywordsField: EditText
+    private lateinit var signatureField: EditText
+    private lateinit var replyToPrivateSwitch: Switch
+    private lateinit var activeFromField: EditText
+    private lateinit var activeToField: EditText
+    private lateinit var cooldownSecondsField: EditText
+    private lateinit var maxPerChatPerDayField: EditText
+    private lateinit var maxPerHourField: EditText
+    private lateinit var maxPerDayField: EditText
+    private lateinit var minIntervalSecondsField: EditText
+    private lateinit var minDelaySecondsField: EditText
+    private lateinit var maxDelaySecondsField: EditText
+    private lateinit var typingMillisPerCharField: EditText
+    private lateinit var grokStyleSwitch: Switch
+    private lateinit var styleProfilesSummary: TextView
 
     // ---- 回复方式 ----
     private lateinit var modeGroup: RadioGroup
@@ -108,6 +126,9 @@ class MainActivity : Activity() {
         if (requestCode == REQUEST_WIZARD && resultCode == RESULT_OK) {
             loadIntoUi(Storage.loadConfig(this))
             Toast.makeText(this, "已按你的回答生成好了", Toast.LENGTH_SHORT).show()
+        }
+        if (requestCode == REQUEST_STYLE_PROFILE && resultCode == RESULT_OK) {
+            data?.data?.let(::importStyleProfiles)
         }
     }
 
@@ -241,6 +262,13 @@ class MainActivity : Activity() {
             "十道选择题，一分钟答完，会把下面这些内容整套生成好——" +
                 "包括 AI 模式下的人设。答完还能在下面一句一句地改。"
         ))
+        replyToPrivateSwitch = Switch(this).apply { text = "自动回复私聊" }
+        root.addView(replyToPrivateSwitch)
+        signatureField = EditText(this).apply {
+            hint = "留空不附加；例如：（自动回复）"
+        }
+        root.addView(labeled("回复尾注（可选）", signatureField))
+        root.addView(hint("默认不加任何括号或 AI 标记。这里留空即可让回复保持自然。"))
 
         root.addView(divider())
 
@@ -284,6 +312,11 @@ class MainActivity : Activity() {
             addView(RadioButton(context).apply { id = groupAlwaysId; text = "群里任何消息都回（容易刷屏）" })
         }
         root.addView(groupPolicyGroup)
+        selfNicknamesField = EditText(this).apply {
+            hint = "例如：Tommy，TommyWu（多个用逗号隔开）"
+        }
+        root.addView(labeled("我在微信群里的昵称", selfNicknamesField))
+        root.addView(hint("选择“只在别人 @ 我时回”时必须填写。只匹配完整的 @昵称，不会把 @Tommy2 误判为 @Tommy。"))
 
         root.addView(divider())
 
@@ -325,6 +358,39 @@ class MainActivity : Activity() {
             hint = "多个人用逗号隔开，例如：老板，妈妈"
         }
         root.addView(blockContactsField)
+
+        blockKeywordsField = EditText(this).apply {
+            hint = "例如：合同，面试，报价"
+        }
+        root.addView(labeled("含这些词的消息不自动回", blockKeywordsField))
+        root.addView(hint("这是你可自定义的屏蔽词。转账、红包、验证码等安全词仍会始终拦截。"))
+
+        root.addView(divider())
+
+        root.addView(section("发送节奏与回复上限"))
+        root.addView(hint("这些数字控制多久回一次和每天最多回多少，留在合理范围内能避免短时间密集回复。"))
+        activeFromField = EditText(this).apply { hint = "例如：09:00；留空表示全天" }
+        activeToField = EditText(this).apply { hint = "例如：23:00；留空表示全天" }
+        root.addView(labeled("自动回复时段开始", activeFromField))
+        root.addView(labeled("自动回复时段结束", activeToField))
+        cooldownSecondsField = numberField("同一会话冷却秒数")
+        maxPerChatPerDayField = numberField("单个会话每天最多回复")
+        maxPerHourField = numberField("全局每小时最多回复")
+        maxPerDayField = numberField("全局每天最多回复")
+        minIntervalSecondsField = numberField("不同会话之间至少间隔秒数")
+        minDelaySecondsField = numberField("最短发送等待秒数")
+        maxDelaySecondsField = numberField("最长发送等待秒数")
+        typingMillisPerCharField = numberField("每个字额外等待毫秒")
+        listOf(
+            "同一会话冷却" to cooldownSecondsField,
+            "单会话每天上限" to maxPerChatPerDayField,
+            "每小时总上限" to maxPerHourField,
+            "每天总上限" to maxPerDayField,
+            "跨会话最小间隔" to minIntervalSecondsField,
+            "最短等待" to minDelaySecondsField,
+            "最长等待" to maxDelaySecondsField,
+            "每字等待" to typingMillisPerCharField,
+        ).forEach { (label, field) -> root.addView(labeled(label, field)) }
 
         root.addView(divider())
 
@@ -372,7 +438,7 @@ class MainActivity : Activity() {
             "安全说明：遇到含「转账、红包、验证码、借钱」等字样的消息，" +
                 "程序一律不自动回，交给你本人处理。这条改不了，AI 模式下也一样——" +
                 "这类消息压根不会发给模型。\n\n" +
-                "每条回复末尾会带「（自动回复）」，让对方知道不是你本人在回。"
+                "默认不会附加“自动回复”尾注；可以在上方按自己的需要填写。"
         ))
 
         return ScrollView(this).apply {
@@ -544,6 +610,12 @@ class MainActivity : Activity() {
         panel.addView(labeled("回复长度上限", maxCharsField))
         panel.addView(hint("真人回微信很少写长段，建议 30 字以内。"))
 
+        grokStyleSwitch = Switch(this).apply {
+            text = "使用 Grok 4.1 风格（实验）"
+        }
+        panel.addView(grokStyleSwitch)
+        panel.addView(hint("它只增加直接、机智和适度幽默的表达方式；不会绕过你的白名单、限流和安全规则。严肃话题会自动收起玩笑。"))
+
         panel.addView(section("你平时是怎么说话的"))
         panel.addView(hint(
             "写几组你真的会说的话。这比任何形容词都管用——AI 会直接模仿这里的语气。" +
@@ -554,6 +626,30 @@ class MainActivity : Activity() {
         panel.addView(Button(this).apply {
             text = "＋ 再加一组"
             setOnClickListener { examplesContainer.addView(exampleRow(AiExample("", ""))) }
+        })
+
+        panel.addView(section("按会话的语气画像（可选）"))
+        panel.addView(hint("可从 Mac 导入脱敏的会话画像。手机只保存显示名、统计摘要和少量示例；不导入微信 ID、Token 或完整聊天记录。生成时只给 AI 当前会话最相关的三组样例。"))
+        styleProfilesSummary = TextView(this).apply {
+            setPadding(dp(0), dp(8), dp(0), dp(8))
+            textSize = 14f
+        }
+        panel.addView(styleProfilesSummary)
+        panel.addView(Button(this).apply {
+            text = "从 Mac 导出的画像文件导入"
+            setOnClickListener {
+                startActivityForResult(
+                    Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = "application/json"
+                    },
+                    REQUEST_STYLE_PROFILE,
+                )
+            }
+        })
+        panel.addView(Button(this).apply {
+            text = "清除已导入的画像"
+            setOnClickListener { clearStyleProfiles() }
         })
     }
 
@@ -623,6 +719,8 @@ class MainActivity : Activity() {
         toneField.setText(config.persona.tone)
         playbookField.setText(config.persona.playbook)
         maxCharsField.setText(config.persona.maxChars.toString())
+        grokStyleSwitch.isChecked = config.persona.stylePreset == "grok4_1"
+        renderStyleProfiles(config)
 
         examplesContainer.removeAllViews()
         config.persona.examples.ifEmpty { listOf(AiExample("", "")) }
@@ -636,7 +734,21 @@ class MainActivity : Activity() {
             }
         )
         fallbackField.setText(config.fallbackText)
+        replyToPrivateSwitch.isChecked = config.replyToPrivate
+        signatureField.setText(config.signature)
+        selfNicknamesField.setText(config.selfNicknames.joinToString("，"))
         blockContactsField.setText(config.blockContacts.joinToString("，"))
+        blockKeywordsField.setText(config.blockKeywords.joinToString("，"))
+        cooldownSecondsField.setText(config.cooldownSeconds.toString())
+        activeFromField.setText(formatMinute(config.activeFromMinute))
+        activeToField.setText(formatMinute(config.activeToMinute))
+        maxPerChatPerDayField.setText(config.maxPerChatPerDay.toString())
+        maxPerHourField.setText(config.maxPerHour.toString())
+        maxPerDayField.setText(config.maxPerDay.toString())
+        minIntervalSecondsField.setText(config.minIntervalSeconds.toString())
+        minDelaySecondsField.setText(config.minDelaySeconds.toString())
+        maxDelaySecondsField.setText(config.maxDelaySeconds.toString())
+        typingMillisPerCharField.setText(config.typingMillisPerChar.toString())
         renderSeenContacts(config.allowContacts)
 
         rulesContainer.removeAllViews()
@@ -645,6 +757,10 @@ class MainActivity : Activity() {
     }
 
     private fun saveFromUi() {
+        timingInputProblem()?.let {
+            Toast.makeText(this, "未保存：$it", Toast.LENGTH_LONG).show()
+            return
+        }
         val config = buildConfigFromUi()
         Storage.saveConfig(this, config)
 
@@ -659,6 +775,9 @@ class MainActivity : Activity() {
 
     /** AI 模式下缺东西时的人话说明；没问题返回 null。 */
     private fun configProblem(config: EngineConfig): String? {
+        if (config.groupPolicy == GroupPolicy.ONLY_AT_ME && config.selfNicknames.isEmpty()) {
+            return "群聊设为只在 @ 你时回复，但还没填写你在群里的昵称"
+        }
         if (config.replyMode != ReplyMode.AI) return null
         return when {
             config.ai.source == AiSource.RELAY && config.ai.relayUrl.isBlank() ->
@@ -706,11 +825,26 @@ class MainActivity : Activity() {
 
         return Storage.loadConfig(this).copy(
             enabled = masterSwitch.isChecked,
+            signature = signatureField.text.toString().trim(),
+            replyToPrivate = replyToPrivateSwitch.isChecked,
             groupPolicy = policy,
+            selfNicknames = splitList(selfNicknamesField.text.toString()),
             rules = rules,
             fallbackText = fallbackField.text.toString().trim(),
             blockContacts = splitList(blockContactsField.text.toString()),
+            blockKeywords = splitList(blockKeywordsField.text.toString()),
             allowContacts = checkedSeenContacts() + splitList(allowContactsField.text.toString()),
+            // timingInputProblem() 会在保存前拒绝非法值；这里的回退仅保护预览与导入流程。
+            activeFromMinute = parseTimeOfDay(activeFromField.text.toString()) ?: -1,
+            activeToMinute = parseTimeOfDay(activeToField.text.toString()) ?: -1,
+            cooldownSeconds = numberValue(cooldownSecondsField, 0, 86_400, 1800),
+            maxPerChatPerDay = numberValue(maxPerChatPerDayField, 0, 10_000, 5),
+            maxPerHour = numberValue(maxPerHourField, 0, 10_000, 30),
+            maxPerDay = numberValue(maxPerDayField, 0, 10_000, 100),
+            minIntervalSeconds = numberValue(minIntervalSecondsField, 0, 86_400, 45),
+            minDelaySeconds = numberValue(minDelaySecondsField, 0, 60, 3),
+            maxDelaySeconds = numberValue(maxDelaySecondsField, 0, 60, 12),
+            typingMillisPerChar = numberValue(typingMillisPerCharField, 0, 10_000, 120),
             replyMode = if (modeGroup.checkedRadioButtonId == modeAiId)
                 ReplyMode.AI else ReplyMode.KEYWORD,
             ai = AiConfig(
@@ -728,6 +862,7 @@ class MainActivity : Activity() {
                 playbook = playbookField.text.toString().trim(),
                 maxChars = maxCharsField.text.toString().trim().toIntOrNull()?.coerceIn(10, 200) ?: 30,
                 examples = examples,
+                stylePreset = if (grokStyleSwitch.isChecked) "grok4_1" else "",
             ),
         )
     }
@@ -743,6 +878,10 @@ class MainActivity : Activity() {
         val text = testInput.text.toString().trim()
         if (text.isEmpty()) {
             showPreview("先在上面输入一句话", "#757575")
+            return
+        }
+        timingInputProblem()?.let {
+            showPreview("⚠️ $it", "#EF6C00")
             return
         }
 
@@ -924,6 +1063,73 @@ class MainActivity : Activity() {
             .map { it.trim() }
             .filter { it.isNotEmpty() }
 
+    private fun numberField(hintText: String): EditText = EditText(this).apply {
+        hint = hintText
+        inputType = InputType.TYPE_CLASS_NUMBER
+    }
+
+    private fun numberValue(field: EditText, min: Int, max: Int, fallback: Int): Int =
+        field.text.toString().trim().toIntOrNull()?.coerceIn(min, max) ?: fallback
+
+    /** 保存前拒绝扩大生效范围或让延迟配置自相矛盾的输入。 */
+    private fun timingInputProblem(): String? {
+        val from = parseTimeOfDay(activeFromField.text.toString())
+        val to = parseTimeOfDay(activeToField.text.toString())
+        if (from == null || to == null) return "自动回复时段请按 HH:mm 填写"
+        if ((from == -1) != (to == -1)) return "自动回复时段要么两边都填写，要么都留空"
+        val minDelay = numberValue(minDelaySecondsField, 0, 60, 3)
+        val maxDelay = numberValue(maxDelaySecondsField, 0, 60, 12)
+        if (minDelay > maxDelay) return "最短发送等待不能大于最长发送等待"
+        return null
+    }
+
+    private fun formatMinute(value: Int): String =
+        if (value !in 0 until 24 * 60) "" else "%02d:%02d".format(value / 60, value % 60)
+
+    private fun renderStyleProfiles(config: EngineConfig) {
+        val profiles = config.styleProfiles
+        styleProfilesSummary.text = when {
+            profiles.isEmpty() -> "尚未导入会话画像。"
+            else -> "已导入 ${profiles.size} 个会话画像：" +
+                profiles.take(8).joinToString("、") { it.displayName } +
+                if (profiles.size > 8) "等" else ""
+        }
+    }
+
+    private fun importStyleProfiles(uri: Uri) {
+        timingInputProblem()?.let {
+            Toast.makeText(this, "未导入：$it", Toast.LENGTH_LONG).show()
+            return
+        }
+        val raw = runCatching {
+            contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+                ?: throw IllegalArgumentException("文件无法读取")
+        }.getOrElse {
+            Toast.makeText(this, "画像文件读取失败", Toast.LENGTH_LONG).show()
+            return
+        }
+        val imported = Storage.importStyleProfiles(raw)
+        if (imported.error != null) {
+            Toast.makeText(this, "未导入：${imported.error}", Toast.LENGTH_LONG).show()
+            return
+        }
+        val config = buildConfigFromUi().copy(styleProfiles = imported.profiles)
+        Storage.saveConfig(this, config)
+        renderStyleProfiles(config)
+        Toast.makeText(this, "已导入 ${imported.profiles.size} 个会话画像", Toast.LENGTH_LONG).show()
+    }
+
+    private fun clearStyleProfiles() {
+        timingInputProblem()?.let {
+            Toast.makeText(this, "未保存：$it", Toast.LENGTH_LONG).show()
+            return
+        }
+        val config = buildConfigFromUi().copy(styleProfiles = emptyList())
+        Storage.saveConfig(this, config)
+        renderStyleProfiles(config)
+        Toast.makeText(this, "已清除会话画像", Toast.LENGTH_SHORT).show()
+    }
+
     // ------------------------------------------------------------------ 状态
 
     private fun refreshPermissionStatus() {
@@ -1005,6 +1211,7 @@ class MainActivity : Activity() {
 
     companion object {
         private const val REQUEST_WIZARD = 1
+        private const val REQUEST_STYLE_PROFILE = 2
         private const val TAG_KEYWORDS = "kw"
         private const val TAG_REPLY = "rp"
         private const val TAG_EX_THEM = "ex_them"

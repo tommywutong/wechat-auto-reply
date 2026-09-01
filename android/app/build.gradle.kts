@@ -34,4 +34,6 @@ dependencies {
 
     // 引擎单测（纯 JVM，不需要设备）
     testImplementation("junit:junit:4.13.2")
+    // Android 平台自带 org.json；JVM 单测没有可执行实现，导入画像的严格解析需用它验证。
+    testImplementation("org.json:json:20240303")
 }

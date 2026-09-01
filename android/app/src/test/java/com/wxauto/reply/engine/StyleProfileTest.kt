@@ -72,8 +72,8 @@ class StyleProfileTest {
             ),
         )
         val picked = profile.examplesFor("火锅订哪家")
-        assertEquals(3, picked.size)
-        assertTrue(picked.take(2).all { it.them.contains("火锅") })
+        assertEquals(2, picked.size)
+        assertTrue(picked.all { it.them.contains("火锅") })
     }
 
     @Test

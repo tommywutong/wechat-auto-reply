@@ -26,6 +26,29 @@ def test_public_settings_never_expose_credentials() -> None:
     assert result["allowTalkers"] == ["wxid-test"]
     assert "blockKeywords" in result
     assert "personaTone" in result
+    assert result["personaStylePreset"] == ""
+
+
+def test_public_settings_include_vision_configuration_without_credentials() -> None:
+    result = app_config._public_settings(
+        {
+            "llm": {
+                "vision_provider": "qwen_bailian",
+                "vision_model": "qwen3-vl-flash",
+                "vision_fallback_model": "qwen3-vl-plus",
+                "vision_base_url": "https://example.invalid/v1",
+                "vision_enabled": True,
+                "api_key": "must-not-appear",
+            }
+        }
+    )
+
+    assert result["visionProvider"] == "qwen_bailian"
+    assert result["visionModel"] == "qwen3-vl-flash"
+    assert result["visionFallbackModel"] == "qwen3-vl-plus"
+    assert result["visionBaseUrl"] == "https://example.invalid/v1"
+    assert result["visionEnabled"] is True
+    assert "must-not-appear" not in str(result)
 
 
 def test_apply_updates_only_safe_fields() -> None:
@@ -46,6 +69,7 @@ def test_apply_updates_only_safe_fields() -> None:
             "personaPlaybook": "重要事项等本人回复",
             "personaBoundaries": ["不承诺具体时间"],
             "personaExamples": [{"them": "在吗", "me": "在，怎么了", "note": "简短"}],
+            "personaStylePreset": "grok4_1",
         },
     )
 
@@ -59,6 +83,18 @@ def test_apply_updates_only_safe_fields() -> None:
     assert payload["persona"]["playbook"] == "重要事项等本人回复"
     assert payload["persona"]["boundaries"] == ["不承诺具体时间"]
     assert payload["persona"]["examples"] == [{"them": "在吗", "me": "在，怎么了", "note": "简短"}]
+    assert payload["persona"]["style_preset"] == "grok4_1"
+
+
+def test_apply_rejects_unknown_style_preset() -> None:
+    payload = {"persona": {}}
+
+    try:
+        app_config._apply(payload, {"personaStylePreset": "unknown"})
+    except ValueError as exc:
+        assert "personaStylePreset" in str(exc)
+    else:
+        raise AssertionError("expected unknown style preset to fail")
 
 
 def test_apply_rejects_inverted_delay_range() -> None:
@@ -101,3 +137,26 @@ def test_public_settings_expose_replay_offline_flag(tmp_path: Path, monkeypatch)
     result = app_config._public_settings({})
 
     assert result["replayOfflineOnStart"] is True
+
+
+def test_public_settings_and_apply_support_quiet_sending() -> None:
+    payload = {"sending": {}}
+    app_config._apply(
+        payload,
+        {
+            "quietMode": True,
+            "onlyWhenUserIdle": True,
+            "userIdleSeconds": 2.5,
+            "allowFrontmostSwitch": False,
+            "deferredRetrySeconds": 20,
+            "deferredReplyExpirySeconds": 600,
+        },
+    )
+
+    settings = app_config._public_settings(payload)
+    assert settings["quietMode"] is True
+    assert settings["onlyWhenUserIdle"] is True
+    assert settings["userIdleSeconds"] == 2.5
+    assert settings["allowFrontmostSwitch"] is False
+    assert settings["deferredRetrySeconds"] == 20
+    assert settings["deferredReplyExpirySeconds"] == 600

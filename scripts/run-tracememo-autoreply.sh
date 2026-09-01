@@ -19,7 +19,7 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "自动回复发送模式只能在 macOS 上运行。" >&2
   exit 1
 fi
-if [[ ! -x "$HELPER_DIR/vision-ocr" || ! -x "$HELPER_DIR/mouse-click" || ! -x "$HELPER_DIR/mouse-scroll" ]]; then
+if [[ ! -x "$HELPER_DIR/vision-ocr" || ! -x "$HELPER_DIR/mouse-click" || ! -x "$HELPER_DIR/mouse-scroll" || ! -x "$HELPER_DIR/mouse-state" ]]; then
   echo "正在准备 macOS OCR 和界面辅助程序..."
   if ! bash "$REPO_DIR/scripts/build-macos-helpers.sh"; then
     echo "macOS OCR 辅助程序准备失败，请检查 Xcode Command Line Tools。" >&2
@@ -29,7 +29,11 @@ fi
 
 export WXAUTO_TOKEN_FILE="$REPO_DIR/.wxauto_token"
 # 凭据统一从 macOS Keychain 读取，避免终端/IDE 继承旧 Token 覆盖新值。
-unset DEEPSEEK_API_KEY TRACEMEMO_API_TOKEN WECHATEXPLORER_API_TOKEN WXAUTO_LLM_API_KEY WXAUTO_TOKEN
+unset DEEPSEEK_API_KEY QWEN_API_KEY DASHSCOPE_API_KEY TRACEMEMO_API_TOKEN WECHATEXPLORER_API_TOKEN WXAUTO_LLM_API_KEY WXAUTO_TOKEN
+
+if [[ "${WXAUTO_SKIP_TRACEMEMO_BOOTSTRAP:-0}" != "1" ]]; then
+  bash "$REPO_DIR/scripts/ensure-tracememo-runtime.sh"
+fi
 
 INTERVAL_FILE="$REPO_DIR/var/poll-interval"
 if [ -s "$INTERVAL_FILE" ] && [[ "$(cat "$INTERVAL_FILE")" =~ ^[0-9]+$ ]]; then

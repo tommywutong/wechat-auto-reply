@@ -28,7 +28,8 @@ bash scripts/run-macos-app.sh
 基于大语言模型的微信自动回复系统。通过一套可配置的人设与应对策略生成回复，
 而非关键词匹配，因此能够处理未预设的对话内容。
 
-支持 Android 与 macOS 双端部署，两端共用同一套决策逻辑与安全约束。
+支持 Android、macOS 与 iPhone 控制端。Android 与 macOS 可以独立运行，iPhone 端只作为
+Mac 服务的局域网遥控器，不直接读取或操作微信。
 
 > **面向非技术用户的图文步骤：[新手指南.md](新手指南.md)**
 > 本文档面向需要了解实现细节或修改代码的读者。
@@ -38,9 +39,11 @@ bash scripts/run-macos-app.sh
 早期版本的跨平台思路和部分实现参考了 [taotao-river/wechat-auto-reply](https://github.com/taotao-river/wechat-auto-reply)，
 在此致谢。当前仓库独立维护，不继承该项目的 Git 提交历史。
 
-macOS 自动回复使用 [TraceMemo](https://github.com/Wxw-Gu/TraceMemo) 提供的本机
+macOS 自动回复使用 [TraceMemo](https://github.com/Wxw-Gu/TraceMemo) 的 Reader 能力，通过本机
 HTTP API 读取联系人、最近会话和聊天记录；消息数据留在本机，API Token 只从 macOS
-Keychain 读取。TraceMemo 需要单独安装并保持数据库连接。
+Keychain 读取。自动回复启动时会准备一个独立的 TraceMemo Reader 运行时：已有 TraceMemo
+数据会直接复用，没有安装也会按固定版本从官方 Release 下载到用户目录，不需要用户单独安装
+TraceMemo 应用。首次使用仍需在 TraceMemo 中完成一次微信数据库连接，或提供已经连接好的本机数据目录。
 
 ---
 
@@ -82,11 +85,17 @@ Keychain 读取。TraceMemo 需要单独安装并保持数据库连接。
 
 上述回复均为实时生成，配置中并不存在对应的问答条目。
 
+macOS 设置页还提供“Grok 4.1 风格（实验）”预设。它只改变表达方式，不改变白名单、
+群聊规则、限流、发送确认或安全边界；预设会和每个会话的本地风格画像叠加。该预设基于
+xAI 公开提示词的行为描述进行本地适配，来源和许可证见
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
+
 ## 核心特性
 
 | 特性 | 说明 |
 |---|---|
 | **人设驱动生成** | 基于身份、语气、应对攻略生成回复，非关键词匹配 |
+| **Grok 风格预设** | macOS 可选直接、坦率、适度幽默的 Grok 4.1 风格（实验） |
 | **引导式配置** | 十道选择题生成完整人设，无需手工撰写提示词 |
 | **双模式** | AI 生成 / 本地关键词匹配，后者完全离线 |
 | **多模型支持** | 豆包、DeepSeek、通义千问、智谱 GLM、Moonshot、Claude |
@@ -104,20 +113,21 @@ Keychain 读取。TraceMemo 需要单独安装并保持数据库连接。
 | **运行位置** | 微信手机旁的 Android 设备 | 一台常开的 Mac，微信桌面端保持登录 |
 | **消息入口** | Android 通知监听；通知没有回复入口时可用无障碍兜底 | TraceMemo 本机 HTTP API 读取联系人、最近会话和聊天记录 |
 | **微信是否要在前台** | 通知方案不需要；无障碍兜底需要停在聊天页 | 读取由 TraceMemo 完成；真实发送时会定位并操作 Mac 微信窗口 |
-| **电脑要求** | 不需要电脑，服务和引擎都在 APK 内 | 需要 Mac、Python、TraceMemo 和 Swift 构建工具 |
+| **电脑要求** | 不需要电脑，服务和引擎都在 APK 内 | 需要 Mac、Python 和 Swift 构建工具；Reader 会自动准备 |
 | **消息完整度** | 受系统通知内容限制，长消息可能被截断；免打扰会话通常没有通知 | 通过聊天记录读取，内容更完整；打开会话读取时可能清除未读状态 |
 | **图片与表情包** | 当前主要按通知文本处理，不保证能读到媒体内容 | TraceMemo 提供媒体地址时可下载并用 macOS Vision OCR 尝试识别；回复可发送 Unicode emoji |
 | **网络与数据** | 关键词模式可完全离线；AI 模式从手机直连所选模型或中继服务 | 消息、日志和配置留在 Mac；AI 请求从 Mac 发出，凭据放在 macOS Keychain |
 | **适合场景** | 没有常开电脑、希望手机独立运行 | iPhone 用户、需要更完整消息、希望用桌面控制面板管理服务 |
 
-简单选择：没有 Mac 就用 Android；有 Mac 且希望代理 iPhone 上的同一个微信号，优先用 macOS。
+简单选择：没有 Mac 就用 Android；有 Mac 且希望代理 iPhone 上的同一个微信号，优先用 macOS；
+需要在 iPhone 上查看和控制 Mac 时，再安装 [`ios/companion/`](ios/companion/)。
 
 ## 系统要求
 
 | 部署方式 | 要求 | 是否需要电脑 |
 |---|---|---|
 | **Android** | Android 8.0 (API 26) 及以上 | 否 |
-| **macOS 控制 App** | macOS 13 及以上，Python 3.9+，Swift 5.9+/Xcode Command Line Tools，已登录 macOS 版微信和 TraceMemo | 是（需常驻运行） |
+| **macOS 控制 App** | macOS 13 及以上，Python 3.9+，Swift 5.9+/Xcode Command Line Tools，已登录 macOS 版微信；Reader 自动准备 | 是（需常驻运行） |
 
 iPhone 用户请采用 macOS 方案：微信支持手机与桌面端同时在线且共享消息，
 在 Mac 端回复等效于本人在 iPhone 上回复，无需越狱或安装任何 iOS 应用。
@@ -149,8 +159,8 @@ https://github.com/tommywutong/wechat-auto-reply/releases/latest/download/wechat
 ### macOS
 
 macOS 版目前需要从源码自行安装，没有提供可直接双击的签名安装包。完整链路由
-`TraceMemo → 本地规则服务 → 自动回复轮询器 → Mac 微信界面` 组成；Mac 需要保持开机、
-微信登录和 TraceMemo 数据库连接。
+`TraceMemo Reader → 本地规则服务 → 自动回复轮询器 → Mac 微信界面` 组成；Mac 需要保持开机、
+微信登录和已连接的本地微信数据库数据。
 
 #### 1. 准备环境
 
@@ -158,9 +168,14 @@ macOS 版目前需要从源码自行安装，没有提供可直接双击的签�
 
 - macOS 13 或更高版本
 - Mac 版微信，并登录要自动回复的微信号
-- [TraceMemo](https://github.com/Wxw-Gu/TraceMemo)，启动后完成数据库连接
 - Python 3.9 或更高版本
 - Xcode Command Line Tools（构建 Swift 控制 App、OCR 和鼠标辅助程序）
+
+不需要单独安装 TraceMemo。首次启动自动回复服务时，程序会检查 `127.0.0.1:6131`；已有
+TraceMemo 正在运行时直接复用，没有运行时会自动下载官方 TraceMemo Reader 到
+`~/Library/Application Support/TraceMemoAutoReply/runtime`，并优先复用本机已有的
+`~/Library/Application Support/TraceMemo` 数据目录。若本机从未连接过微信数据库，需要先
+用 TraceMemo 完成一次连接并保留其数据目录；这是微信数据库密钥和连接状态的来源。
 
 如果尚未安装开发者命令行工具，可在终端执行：
 
@@ -221,7 +236,7 @@ bash scripts/run-macos-app.sh
 
 #### 6. 先安全试跑，再开启真实发送
 
-保持微信和 TraceMemo 运行，在项目目录按顺序执行：
+保持微信登录，并确认内置 Reader 已在控制 App 概览页显示正常，在项目目录按顺序执行：
 
 ```bash
 "./1 检查微信.command"
@@ -406,6 +421,16 @@ docs/                 部署、多账号、iOS 可行性分析
 | **macOS 代理（推荐）** | 否 | 完整，不占用手机 | [`macos/`](macos/) |
 
 完整分析见 [`docs/ios-feasibility.md`](docs/ios-feasibility.md)。
+
+### iPhone 控制端
+
+仓库还提供一个 Objective-C/UIKit 控制端，用来在 iPhone 上查看 Mac 服务状态、日志、白名单
+和部分自动回复设置，并远程启动、停止或重启 Mac 服务。它不是微信插件，不读取 iPhone 上的
+微信，也不能在 Mac 关机时独立回复。
+
+构建和配对说明见 [`ios/companion/README.md`](ios/companion/README.md)。Mac 端先执行
+`bash scripts/install-tracememo-control.sh`，把终端显示的 Mac `.local` 地址和一次性配对码填入
+iPhone App。控制服务使用独立令牌，不复用微信或模型密钥。
 
 ## 开发与测试
 

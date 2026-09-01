@@ -1,6 +1,6 @@
 # macOS 微信自动回复
 
-macOS 模块负责从本机微信数据源取得新消息，并在决策引擎允许时生成草稿或安全地操作微信界面发送。推荐的数据源是单独安装的 TraceMemo。
+macOS 模块负责从本机微信数据源取得新消息，并在决策引擎允许时生成草稿或安全地操作微信界面发送。数据源由内置 TraceMemo Reader 提供；如果本机已有 TraceMemo，会优先复用其数据和服务。
 
 ## 推荐架构
 
@@ -21,6 +21,20 @@ TraceMemo :6131
 - 兼容 TraceMemo 字段并过滤方向不明、旧消息和重复消息。
 - 合并短时间内同一会话的连续输入。
 - 为图片等媒体补充可用描述。
+- 图片和表情包可通过配置的百炼视觉模型理解，视觉请求失败时退回本地 OCR 文本。
+
+视觉配置示例：
+
+```yaml
+llm:
+  vision_enabled: true
+  vision_provider: qwen_bailian
+  vision_model: qwen3-vl-flash
+  vision_fallback_model: qwen3-vl-plus
+  vision_base_url: https://你的百炼业务空间/compatible-mode/v1
+```
+
+视觉 Key 只从 `QWEN_API_KEY` 或 macOS Keychain 服务 `com.wxauto.qwen-api-key` 读取。
 - 调用本地决策服务。
 - 写草稿，或把批准结果交给发送器。
 
@@ -31,6 +45,10 @@ TraceMemo :6131
 
 普通问候和闲聊默认直接回应，不再把“忙完再说”“晚点回”当作常规话术。只有约时间、金额、承诺、
 资料不足或需要本人决策时，模型才会保守地留给本人确认。
+
+图片和表情包会保留在本机内存中，按 `llm.vision_*` 配置发送到百炼视觉模型；默认使用
+`qwen3-vl-flash`，模型不可用时尝试 `qwen3-vl-plus`，都失败才退回本地 OCR 文本。普通文字仍使用
+`llm.provider` 配置的文字模型。媒体不会写入 Git、日志或草稿文件。
 
 性能上，轮询器会并行读取多个白名单会话，再按原会话顺序完成去重、批次决策和发送；模型调用与真实
 微信发送不会并发。常驻模式按固定节拍开始下一轮，处理耗时不会额外拖慢下一轮。默认读取线程数为 4，

@@ -21,6 +21,14 @@ scope:
   allow_talkers: []
   block_contacts: []
 
+sending:
+  quiet_mode: true
+  only_when_user_idle: true
+  user_idle_seconds: 1.5
+  allow_frontmost_switch: true
+  deferred_retry_seconds: 15
+  deferred_reply_expiry_seconds: 600  # 用户忙碌时的排队回复最多保留 10 分钟
+
 limits:
   per_chat_cooldown_seconds: 900     # AI 模式下可以放宽一点，回复不会重复
   max_replies_per_chat_per_day: 8
@@ -38,6 +46,7 @@ llm:
   #   doubao     豆包（火山方舟）  key 从 ARK_API_KEY 读
   #   deepseek   DeepSeek         DEEPSEEK_API_KEY
   #   qwen       通义千问          DASHSCOPE_API_KEY
+  #   qwen_bailian 通义千问（百炼业务空间） QWEN_API_KEY
   #   zhipu      智谱 GLM         ZHIPU_API_KEY
   #   moonshot   Moonshot         MOONSHOT_API_KEY
   #   anthropic  Claude           ANTHROPIC_API_KEY（国内不好注册）
@@ -52,11 +61,23 @@ llm:
   # effort 只对 Claude 有效
   effort: low            # 自动回复要低延迟，不需要深度推理
 
+  # 图片/表情包会使用视觉模型；普通文字仍走上面的文字模型。
+  vision_enabled: true
+  vision_provider: qwen_bailian
+  vision_model: qwen3-vl-flash
+  vision_fallback_model: qwen3-vl-plus
+  # 百炼业务空间的 OpenAI 兼容地址；留空使用服务商默认地址。
+  vision_base_url: ""
+
 # ============================================================
 # 人设 —— 这一段决定了回复像不像你本人
 # 照抄没用，一定要按你自己的情况改写
 # ============================================================
 persona:
+
+  # 可选内置预设："" 或 grok4_1。只改变表达风格，不改变安全和限流规则。
+  # grok4_1 是基于 xAI 公开 Grok 4.1 提示词的本地适配版，不包含 X/工具能力声明。
+  style_preset: ""
 
   # 你是谁、现在什么状态。让模型知道「为什么现在不方便回」。
   identity: |

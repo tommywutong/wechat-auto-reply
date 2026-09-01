@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import fcntl
 import logging
 import os
 import re
@@ -27,9 +28,25 @@ logger = logging.getLogger("wechat-sender")
 class SenderError(RuntimeError):
     """微信界面发送失败，并标记是否已经尝试过最终发送动作。"""
 
-    def __init__(self, message: str, *, send_attempted: bool = False) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        send_attempted: bool = False,
+        defer_retry: bool = False,
+        retry_after: float | None = None,
+    ) -> None:
         super().__init__(message)
         self.send_attempted = send_attempted
+        self.defer_retry = defer_retry
+        self.retry_after = retry_after
+
+
+class DeferredSendError(SenderError):
+    """用户正在使用电脑，发送动作应进入持久队列而不是消耗重试次数。"""
+
+    def __init__(self, message: str, *, retry_after: float = 15.0) -> None:
+        super().__init__(message, defer_retry=True, retry_after=retry_after)
 
 
 @dataclass(frozen=True)
@@ -239,6 +256,34 @@ def _clipboard_read() -> str:
     except (OSError, subprocess.TimeoutExpired):
         return ""
     return result.stdout if result.returncode == 0 else ""
+
+
+def _read_cursor_position(binary: Path) -> tuple[float, float] | None:
+    if not binary.is_file() or not os.access(binary, os.X_OK):
+        return None
+    try:
+        result = subprocess.run(
+            [str(binary), "position"], capture_output=True, text=True, timeout=3, check=False
+        )
+        x, y = (float(part) for part in result.stdout.strip().split(","))
+        return x, y
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+
+
+def _restore_cursor_position(binary: Path, position: tuple[float, float] | None) -> None:
+    if position is None or not binary.is_file() or not os.access(binary, os.X_OK):
+        return
+    try:
+        subprocess.run(
+            [str(binary), "move", f"{position[0]:.1f}", f"{position[1]:.1f}"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        logger.debug("恢复鼠标位置失败", exc_info=True)
 
 
 def _screenshot(bounds: WindowBounds, path: Path) -> None:
@@ -585,17 +630,74 @@ def _input_region_from_button(button: OCRObservation) -> tuple[float, float, flo
 class WeChatSender:
     """带目标会话确认的微信文字发送器。"""
 
-    # 白名单会话通常位于列表前部；只做有限的小步滚动，避免把用户的
-    # 列表位置大幅改变，也避免在错误会话上长时间操作。
-    _SIDEBAR_SCROLL_DELTAS = (6, 6, 6, 6, 6, -6, -6, -6, -6, -6, -6)
+    # 微信的滚轮事件按“行”计数。实测 10 行通常只移动一个会话，
+    # 因此每次滚动 35 行，约前进 3～4 个会话，同时仍保留足够的可见
+    # 列表重叠，避免目标落在两次 OCR 之间。每一步都会重新 OCR，目标
+    # 出现即停止，右侧标题复核仍是发送前的硬门槛。
+    _SIDEBAR_SCROLL_STEP = 35
+    _SIDEBAR_SCROLL_DELTAS = (_SIDEBAR_SCROLL_STEP,) * 8 + (-_SIDEBAR_SCROLL_STEP,) * 16
 
-    def __init__(self, *, repo_dir: str | Path | None = None, settle_seconds: float = 0.8) -> None:
+    def __init__(
+        self,
+        *,
+        repo_dir: str | Path | None = None,
+        settle_seconds: float = 0.8,
+        quiet_mode: bool = True,
+        only_when_user_idle: bool = True,
+        user_idle_seconds: float = 1.5,
+        allow_frontmost_switch: bool = True,
+        deferred_retry_seconds: float = 15.0,
+    ) -> None:
         root = Path(repo_dir) if repo_dir else Path(__file__).resolve().parents[1]
         self._ocr_binary = root / ".build" / "vision-ocr"
         self._click_binary = root / ".build" / "mouse-click"
         self._scroll_binary = root / ".build" / "mouse-scroll"
+        self._mouse_state_binary = root / ".build" / "mouse-state"
         self._settle_seconds = settle_seconds
         self._failure_dir = root / "var" / "wechat-sender-failures"
+        self._lock_path = root / "var" / "wechat-sender.lock"
+        self._quiet_mode = quiet_mode
+        self._only_when_user_idle = only_when_user_idle
+        self._user_idle_seconds = max(0.0, float(user_idle_seconds))
+        self._allow_frontmost_switch = allow_frontmost_switch
+        self._deferred_retry_seconds = max(1.0, float(deferred_retry_seconds))
+
+    def _user_idle_for(self) -> float | None:
+        if not self._mouse_state_binary.is_file() or not os.access(self._mouse_state_binary, os.X_OK):
+            return None
+        try:
+            result = subprocess.run(
+                [str(self._mouse_state_binary), "idle"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+            if result.returncode != 0:
+                return None
+            return float(result.stdout.strip())
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            return None
+
+    def _ensure_user_idle(self, stage: str) -> None:
+        if not self._quiet_mode or not self._only_when_user_idle:
+            return
+        idle_for = self._user_idle_for()
+        if idle_for is None:
+            # A missing helper is a hard failure: silently switching to the
+            # foreground would defeat the user's explicit quiet-send choice.
+            raise SenderError("无法确认用户空闲状态，请重新构建 macOS 辅助程序")
+        if idle_for + 0.05 < self._user_idle_seconds:
+            raise DeferredSendError(
+                f"{stage}检测到用户正在操作电脑（空闲 {idle_for:.1f} 秒）",
+                retry_after=self._deferred_retry_seconds,
+            )
+
+    def _can_restore_user_state(self) -> bool:
+        if not self._quiet_mode or not self._only_when_user_idle:
+            return True
+        idle_for = self._user_idle_for()
+        return idle_for is not None and idle_for + 0.05 >= self._user_idle_seconds
 
     def _click(self, bounds: WindowBounds) -> None:
         if not self._click_binary.is_file() or not os.access(self._click_binary, os.X_OK):
@@ -607,6 +709,7 @@ class WeChatSender:
         self._click_point(x, y, "微信输入区")
 
     def _click_point(self, x: int, y: int, label: str) -> None:
+        self._ensure_user_idle(f"点击{label}前")
         try:
             result = subprocess.run(
                 [str(self._click_binary), str(x), str(y)],
@@ -623,6 +726,7 @@ class WeChatSender:
     def _scroll_sidebar(self, bounds: WindowBounds, delta: int) -> None:
         """在左侧列表发送独立滚轮事件，不用按住鼠标拖动列表。"""
 
+        self._ensure_user_idle("滚动会话列表前")
         if not self._scroll_binary.is_file() or not os.access(self._scroll_binary, os.X_OK):
             raise SenderError("找不到滚动辅助程序，请先运行 build-macos-helpers.sh")
         x = bounds.x + int(bounds.width * 0.20)
@@ -731,8 +835,8 @@ class WeChatSender:
             return False
 
     def _click_sidebar_target(self, bounds: WindowBounds, target_name: str) -> bool:
-        # 首先检查当前可见列表，然后只做几次小步滚动。私信和群聊都走
-        # 这条路径；找到会话后立即停止，不会继续滚动或拖动列表。
+        # 首先检查当前可见列表，然后用较大但仍有重叠的步长扫描。私信和
+        # 群聊都走这条路径；找到会话后立即停止，不会继续滚动或拖动列表。
         previous_fingerprint: tuple[str, ...] | None = None
         unchanged_by_direction: dict[int, int] = {1: 0, -1: 0}
         for attempt, delta in enumerate((None, *self._SIDEBAR_SCROLL_DELTAS)):
@@ -968,9 +1072,31 @@ class WeChatSender:
         if not text.strip():
             raise SenderError("回复内容为空")
 
+        self._ensure_user_idle("发送前")
         old_clipboard = _clipboard_read()
         previous_frontmost = _frontmost_process()
+        cursor_position = _read_cursor_position(self._mouse_state_binary)
+        if (
+            self._quiet_mode
+            and not self._allow_frontmost_switch
+            and previous_frontmost != "WeChat"
+        ):
+            raise DeferredSendError(
+                f"当前前台应用是 {previous_frontmost}，已启用不切换前台",
+                retry_after=self._deferred_retry_seconds,
+            )
+        self._lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_fd = os.open(self._lock_path, os.O_CREAT | os.O_RDWR, 0o600)
         try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            os.close(lock_fd)
+            raise DeferredSendError(
+                "已有另一条消息正在发送",
+                retry_after=self._deferred_retry_seconds,
+            ) from exc
+        try:
+            self._ensure_user_idle("切换微信前")
             # 微信已经有可用主窗口时直接激活，避免每条消息都重复等待
             # ``open -a`` 的启动稳定时间；窗口不存在时仍走完整启动校验。
             try:
@@ -994,6 +1120,7 @@ class WeChatSender:
             self._confirm_target_title(bounds, target_name, "进入会话后")
 
             self._paste_and_confirm(bounds, target_name, text)
+            self._ensure_user_idle("发送快捷键前")
             try:
                 _run_osascript(
                     r'''
@@ -1016,9 +1143,15 @@ end tell
             else:
                 logger.info("已向已确认会话按下发送键")
         finally:
-            # 尽量恢复用户原来的剪贴板；恢复失败不影响已经完成的发送。
-            try:
-                _clipboard_write(old_clipboard)
-            except SenderError:
-                logger.debug("恢复剪贴板失败")
-            _restore_frontmost_process(previous_frontmost)
+            # 若发送途中用户重新开始操作，不能再覆盖其新前台、光标或剪贴板。
+            if self._can_restore_user_state():
+                try:
+                    _clipboard_write(old_clipboard)
+                except SenderError:
+                    logger.debug("恢复剪贴板失败")
+                _restore_frontmost_process(previous_frontmost)
+                _restore_cursor_position(self._mouse_state_binary, cursor_position)
+            else:
+                logger.info("检测到用户已恢复操作，保留当前前台、鼠标和剪贴板状态")
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)

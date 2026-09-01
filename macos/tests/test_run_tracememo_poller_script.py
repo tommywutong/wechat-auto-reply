@@ -29,6 +29,7 @@ def test_launcher_uses_shared_poll_interval(tmp_path: Path) -> None:
     _write_executable(fake_bin / "uname", "#!/bin/sh\necho Darwin\n")
     environment = os.environ.copy()
     environment["PATH"] = f"{fake_bin}{os.pathsep}{environment.get('PATH', '')}"
+    environment["WXAUTO_SKIP_TRACEMEMO_BOOTSTRAP"] = "1"
 
     default = subprocess.run(
         ["/bin/bash", str(script), "--probe"],

@@ -1,6 +1,6 @@
 # 构建、安装与运行脚本
 
-本目录把 Python 核心、TraceMemo、macOS helper、SwiftUI App 和 launchd 服务连接起来。部分脚本会改变本机状态，运行前先看脚本头部说明。
+本目录把 Python 核心、TraceMemo Reader 运行时、macOS helper、SwiftUI App 和 launchd 服务连接起来。部分脚本会改变本机状态，运行前先看脚本头部说明。
 
 ## 安全分类
 
@@ -28,6 +28,7 @@
 
 - `run-tracememo-poller.sh`：草稿模式。
 - `run-tracememo-autoreply.sh`：真实发送模式。
+- `ensure-tracememo-runtime.sh`：检查本机 Reader；必要时下载并以托盘模式启动内置 TraceMemo Reader，优先复用已有数据目录。
 - `update-macos-app.sh`：检查远端 `main` 并按提交号重建控制 App；本地有未提交修改、分支分叉或网络失败时跳过更新，不覆盖本机内容。
 - `run-macos-app.sh`：执行上述更新检查后打开控制面板。
 - `watch-tracememo-autoreply.sh`：状态与日志观察。
@@ -51,7 +52,7 @@ bash scripts/macos-setup.sh
 
 ## 凭据
 
-运行脚本会主动清理继承的敏感环境变量，并通过 [`../core/keychain.py`](../core/keychain.py) 或受保护的兼容 Token 文件读取凭据。不要在脚本、plist、终端输出或文档中硬编码真实密钥。
+运行脚本会主动清理继承的敏感环境变量，并通过 [`../core/keychain.py`](../core/keychain.py) 或受保护的兼容 Token 文件读取凭据。不要在脚本、plist、终端输出或文档中硬编码真实密钥。内置 Reader 下载文件会放在用户目录，不进入 Git 仓库。
 
 ## 开发检查
 

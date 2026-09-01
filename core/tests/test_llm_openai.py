@@ -114,6 +114,68 @@ def test_request_shape_matches_openai_spec(server):
     assert sent["body"]["messages"][-1]["role"] == "user"
 
 
+def test_visual_message_uses_qwen_vl_with_data_url(server):
+    _, handler = server
+    handler.script = [(200, _reply("这是张图"))]
+    writer = _writer(
+        server,
+        vision_model="qwen3-vl-flash",
+        vision_fallback_model="qwen3-vl-plus",
+        vision_base_url="http://127.0.0.1:%d/api/v3" % server[0].server_address[1],
+        vision_api_key="qwen-test-key",
+    )
+
+    result = writer(
+        IncomingMessage(
+            chat_id="image-chat",
+            chat_name="小王",
+            text="【图片】（暂未识别到图片中的文字）",
+            message_type="image",
+            media_data="aGVsbG8=",
+            media_mime_type="image/png",
+        ),
+        _config(),
+    )
+
+    assert result == "这是张图"
+    sent = handler.seen[0]
+    assert sent["body"]["model"] == "qwen3-vl-flash"
+    content = sent["body"]["messages"][-1]["content"]
+    assert content[1]["type"] == "image_url"
+    assert content[1]["image_url"]["url"] == "data:image/png;base64,aGVsbG8="
+    assert sent["auth"] == "Bearer qwen-test-key"
+
+
+def test_visual_model_404_falls_back_to_plus(server):
+    _, handler = server
+    handler.script = [(404, {"error": {"message": "flash unavailable"}}), (200, _reply("看到了"))]
+    writer = _writer(
+        server,
+        vision_model="qwen3-vl-flash",
+        vision_fallback_model="qwen3-vl-plus",
+        vision_base_url="http://127.0.0.1:%d/api/v3" % server[0].server_address[1],
+        vision_api_key="qwen-test-key",
+    )
+
+    result = writer(
+        IncomingMessage(
+            chat_id="image-chat",
+            chat_name="小王",
+            text="【图片】",
+            message_type="image",
+            media_data="aGVsbG8=",
+            media_mime_type="image/png",
+        ),
+        _config(),
+    )
+
+    assert result == "看到了"
+    assert [item["body"]["model"] for item in handler.seen] == [
+        "qwen3-vl-flash",
+        "qwen3-vl-plus",
+    ]
+
+
 def test_persona_reaches_the_model(server):
     _, handler = server
     handler.script = [(200, _reply("在"))]
@@ -336,6 +398,36 @@ def test_provider_defaults_fill_in_base_url_and_model():
     )
     assert config.llm.model == "deepseek-chat"
     assert config.llm.base_url == ""  # 留空，构造时用 provider 的默认地址
+
+
+def test_bailian_vision_provider_defaults_are_available():
+    config = build_config(
+        {
+            "reply_mode": "ai",
+            "persona": {"identity": "我很忙"},
+            "llm": {"provider": "qwen_bailian"},
+        }
+    )
+    assert config.llm.model == "qwen3-vl-flash"
+    assert config.llm.vision_model == "qwen3-vl-flash"
+
+
+def test_bailian_provider_reads_qwen_keychain_service(monkeypatch):
+    monkeypatch.delenv("WXAUTO_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("QWEN_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "core.llm_openai.read_secret",
+        lambda environment, service: "qwen-key" if service == "com.wxauto.qwen-api-key" else "",
+    )
+    config = _config(
+        provider="qwen_bailian",
+        model="qwen3-vl-flash",
+        base_url="https://example.invalid/compatible-mode/v1",
+    )
+
+    writer = build_writer(config)
+
+    assert writer._api_key == "qwen-key"
 
 
 def test_unknown_provider_is_rejected_with_the_list():

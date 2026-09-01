@@ -126,6 +126,11 @@ struct SafeConfig: Codable, Equatable {
     var replayOfflineOnStart = false
     var provider = "deepseek"
     var model = "deepseek-chat"
+    var visionProvider = "qwen_bailian"
+    var visionModel = "qwen3-vl-flash"
+    var visionFallbackModel = "qwen3-vl-plus"
+    var visionBaseUrl = ""
+    var visionEnabled = true
     var maxTokens = 300
     var maxChars = 80
     var personaIdentity = ""
@@ -133,6 +138,13 @@ struct SafeConfig: Codable, Equatable {
     var personaPlaybook = ""
     var personaBoundaries: [String] = []
     var personaExamples: [PersonaExample] = []
+    var personaStylePreset = ""
+    var quietMode = true
+    var onlyWhenUserIdle = true
+    var userIdleSeconds = 1.5
+    var allowFrontmostSwitch = true
+    var deferredRetrySeconds = 15.0
+    var deferredReplyExpirySeconds = 600
     var perChatCooldownSeconds = 0
     var maxRepliesPerChatPerDay = 0
     var globalMaxPerHour = 30
@@ -152,6 +164,7 @@ struct SafeConfig: Codable, Equatable {
             ("单会话每日上限", maxRepliesPerChatPerDay, 0...10_000),
             ("单会话冷却", perChatCooldownSeconds, 0...86_400),
             ("全局最小间隔", globalMinIntervalSeconds, 0...86_400),
+            ("延迟回复有效期", deferredReplyExpirySeconds, 60...86_400),
         ]
         for (label, value, range) in integerRanges where !range.contains(value) {
             return "\(label)应在 \(range.lowerBound) 到 \(range.upperBound) 之间。"
@@ -160,12 +173,19 @@ struct SafeConfig: Codable, Equatable {
             ("最短等待", minDelaySeconds),
             ("最长等待", maxDelaySeconds),
             ("每字打字时间", typingSecondsPerChar),
+            ("用户空闲时间", userIdleSeconds),
         ]
         for (label, value) in decimalRanges where value < 0 || value > 60 {
             return "\(label)应在 0 到 60 之间。"
         }
         if minDelaySeconds > maxDelaySeconds {
             return "最短等待不能大于最长等待。"
+        }
+        if deferredRetrySeconds < 1 || deferredRetrySeconds > 3600 {
+            return "队列检查间隔应在 1 到 3600 秒之间。"
+        }
+        if !["", "grok4_1"].contains(personaStylePreset) {
+            return "回复风格预设无效，请重新选择。"
         }
         return nil
     }
@@ -379,6 +399,7 @@ final class AppModel: ObservableObject {
     @Published var traceMemoHealthy = false
     @Published var traceMemoKeychain = false
     @Published var deepSeekKeychain = false
+    @Published var qwenKeychain = false
     @Published var config = SafeConfig()
     @Published private(set) var persistedConfig = SafeConfig()
     @Published var sessions: [TraceMemoSession] = []
@@ -422,6 +443,10 @@ final class AppModel: ObservableObject {
     var autoReplyState: ServiceState { serviceBundleState.autoreply }
 
     var localServerState: ServiceState { serviceBundleState.engine }
+
+    var credentialsReady: Bool {
+        traceMemoKeychain && deepSeekKeychain && (!config.visionEnabled || qwenKeychain)
+    }
 
     var hasUnsavedChanges: Bool { config != persistedConfig }
 
@@ -468,6 +493,7 @@ final class AppModel: ObservableObject {
         serviceBundleState = ServiceController.bundleStatus()
         traceMemoKeychain = ServiceController.keychainExists(service: "com.wxauto.tracememo-api-token")
         deepSeekKeychain = ServiceController.keychainExists(service: "com.wxauto.deepseek-api-key")
+        qwenKeychain = ServiceController.keychainExists(service: "com.wxauto.qwen-api-key")
         Task { [weak self] in
             let healthy = await HealthCheck.traceMemo()
             await MainActor.run {
@@ -979,6 +1005,18 @@ enum ConfigBridge {
         if object["replayOfflineOnStart"] == nil {
             object["replayOfflineOnStart"] = false
         }
+        if object["visionProvider"] == nil { object["visionProvider"] = "qwen_bailian" }
+        if object["visionModel"] == nil { object["visionModel"] = "qwen3-vl-flash" }
+        if object["visionFallbackModel"] == nil { object["visionFallbackModel"] = "qwen3-vl-plus" }
+        if object["visionBaseUrl"] == nil { object["visionBaseUrl"] = "" }
+        if object["visionEnabled"] == nil { object["visionEnabled"] = true }
+        if object["quietMode"] == nil { object["quietMode"] = true }
+        if object["onlyWhenUserIdle"] == nil { object["onlyWhenUserIdle"] = true }
+        if object["userIdleSeconds"] == nil { object["userIdleSeconds"] = 1.5 }
+        if object["allowFrontmostSwitch"] == nil { object["allowFrontmostSwitch"] = true }
+        if object["deferredRetrySeconds"] == nil { object["deferredRetrySeconds"] = 15.0 }
+        if object["deferredReplyExpirySeconds"] == nil { object["deferredReplyExpirySeconds"] = 600 }
+        if object["personaStylePreset"] == nil { object["personaStylePreset"] = "" }
         let normalized = try JSONSerialization.data(withJSONObject: object)
         return try JSONDecoder().decode(SafeConfig.self, from: normalized)
     }
@@ -1130,7 +1168,7 @@ struct OverviewView: View {
                         Divider()
                         StatusLine(title: "规则服务", detail: "本机 API · 127.0.0.1:8848", state: model.localServerState, symbol: "server.rack")
                         Divider()
-                        StatusLine(title: "凭据", detail: "macOS Keychain（不会在 App 中显示）", state: model.traceMemoKeychain && model.deepSeekKeychain, symbol: "key.fill")
+                        StatusLine(title: "凭据", detail: "macOS Keychain（不会在 App 中显示）", state: model.credentialsReady, symbol: "key.fill")
                     }
                 }
                 .padding(16)
@@ -1533,6 +1571,24 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
 
+            Section("安静发送") {
+                Toggle("启用安静发送", isOn: $model.config.quietMode)
+                Toggle("仅在我停止操作后发送", isOn: $model.config.onlyWhenUserIdle)
+                    .disabled(!model.config.quietMode)
+                DoubleSettingField(title: "至少空闲", unit: "秒", value: $model.config.userIdleSeconds)
+                    .disabled(!model.config.quietMode || !model.config.onlyWhenUserIdle)
+                Toggle("允许短暂切换到微信", isOn: $model.config.allowFrontmostSwitch)
+                    .disabled(!model.config.quietMode)
+                DoubleSettingField(title: "忙碌时再次检查", unit: "秒", value: $model.config.deferredRetrySeconds)
+                    .disabled(!model.config.quietMode)
+                IntSettingField(title: "延迟回复有效期", unit: "秒", value: $model.config.deferredReplyExpirySeconds)
+                    .disabled(!model.config.quietMode)
+                Text("默认 600 秒（10 分钟）。超过有效期的暂缓回复会自动丢弃，不再发送过时内容。")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text("检测到鼠标或键盘操作时，回复会保存在本地队列，不计入失败次数；发送完成后恢复原前台应用、鼠标位置和剪贴板。关闭“允许短暂切换”后，只有微信本来就在前台时才会发送。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
             StringListEditor(
                 title: "活动时段",
                 placeholder: "例如 09:00-23:00，留空表示全天",
@@ -1540,6 +1596,12 @@ struct SettingsView: View {
             )
 
             Section("回复风格") {
+                Picker("风格预设", selection: $model.config.personaStylePreset) {
+                    Text("自定义").tag("")
+                    Text("Grok 4.1 风格（实验）").tag("grok4_1")
+                }
+                Text("预设只调整表达方式，不会覆盖你的身份、历史画像、白名单、发送限制或安全规则。遇到严肃和敏感话题时会自动收起讽刺。")
+                    .font(.caption).foregroundStyle(.secondary)
                 Text("我是谁 / 当前状态").font(.subheadline.weight(.medium))
                 TextEditor(text: $model.config.personaIdentity)
                     .frame(minHeight: 60, maxHeight: 120)
@@ -1564,11 +1626,20 @@ struct SettingsView: View {
 
             PersonaExamplesEditor(examples: $model.config.personaExamples)
 
-            Section("DeepSeek") {
+            Section("文字模型") {
                 LabeledContent("服务商", value: model.config.provider)
                 TextField("模型", text: $model.config.model)
                 IntSettingField(title: "最大输出", unit: "tokens", value: $model.config.maxTokens)
                 Text("API Key 只从 macOS Keychain 读取，App 不显示也不保存密钥。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("图片理解（百炼）") {
+                Toggle("启用图片理解", isOn: $model.config.visionEnabled)
+                TextField("视觉模型", text: $model.config.visionModel)
+                TextField("视觉备用模型", text: $model.config.visionFallbackModel)
+                TextField("百炼 OpenAI 兼容地址", text: $model.config.visionBaseUrl)
+                Text("图片和表情包会发送到你配置的百炼业务空间；普通文字仍使用上面的文字模型。")
                     .font(.caption).foregroundStyle(.secondary)
             }
 

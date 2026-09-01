@@ -5,6 +5,7 @@ venv/
 
 # 运行时状态：冷却计数、每日额度
 var/
+vendor/TraceMemo.app/
 core/config.yaml          # 个人规则，含联系人姓名，不入库
 /core/config.yaml
 .build/
@@ -12,6 +13,11 @@ core/config.yaml          # 个人规则，含联系人姓名，不入库
 var/poll-interval
 dist/
 macos/TraceMemoAutoReplyApp/.build/
+/.build/
+ios/companion/TraceMemoRemote.xcodeproj/xcuserdata/
+ios/companion/TraceMemoRemote.xcodeproj/project.xcworkspace/xcuserdata/
+var/control-token
+var/control-pairing-code
 
 # Android
 android/.gradle/

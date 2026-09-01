@@ -39,7 +39,7 @@ python -m core.preview
 
 ## 模型接入
 
-Anthropic 使用 SDK；豆包、DeepSeek、通义千问、智谱和 Moonshot 等通过 OpenAI 兼容 writer。服务商默认值以 [`providers.py`](providers.py) 为准，凭据应来自环境变量或 macOS Keychain。
+Anthropic 使用 SDK；豆包、DeepSeek、通义千问、百炼业务空间、智谱和 Moonshot 等通过 OpenAI 兼容 writer。服务商默认值以 [`providers.py`](providers.py) 为准，凭据应来自环境变量或 macOS Keychain。图片和表情包可单独路由到视觉模型（默认 `qwen3-vl-flash`，失败时尝试 `qwen3-vl-plus`），普通文字不会上传到视觉模型。
 
 ## 开发与测试
 

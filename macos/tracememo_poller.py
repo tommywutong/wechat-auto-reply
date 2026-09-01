@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 from concurrent.futures import ThreadPoolExecutor
 import dataclasses
 import fcntl
@@ -106,6 +107,8 @@ class ChatMessage:
     media_url: str = ""
     media_id: str = ""
     ocr_text: str = ""
+    media_data: str = ""
+    media_mime_type: str = ""
     message_ids: tuple[str, ...] = ()
     batch_size: int = 1
 
@@ -503,12 +506,42 @@ class PollState:
         meta = self.retry_state.get(talker, {}).get(message_id)
         return bool(meta and float(meta.get("next_at", 0)) <= now)
 
+    def has_retry(self, talker: str, message_id: str) -> bool:
+        return message_id in self.retry_state.get(talker, {})
+
     def retry_attempts(self, talker: str, message_id: str) -> int:
         return int(self.retry_state.get(talker, {}).get(message_id, {}).get("attempts", 0))
 
     def retry_text(self, talker: str, message_id: str) -> str:
         value = self.retry_state.get(talker, {}).get(message_id, {}).get("reply_text", "")
         return str(value).strip()
+
+    def retry_entries(self, talker: str) -> list[tuple[str, dict[str, Any]]]:
+        return list(self.retry_state.get(talker, {}).items())
+
+    def expire_deferred_retries(self, now: float, max_age_seconds: float) -> int:
+        """清理用户忙碌期间暂缓、且已经失去时效的回复。"""
+
+        cutoff = now - max(1.0, float(max_age_seconds))
+        expired = 0
+        for talker, entries in list(self.retry_state.items()):
+            for message_id, meta in list(entries.items()):
+                if not bool(meta.get("deferred")):
+                    continue
+                queued_at = float(
+                    meta.get("deferred_at", meta.get("message_timestamp", 0)) or 0
+                )
+                # 旧格式可能没有任何可判断时间，保留它交给原有重试逻辑，
+                # 避免因为升级而无条件丢弃一条待发送回复。
+                if queued_at <= 0 or queued_at > now + 60:
+                    continue
+                if queued_at >= cutoff:
+                    continue
+                entries.pop(message_id, None)
+                expired += 1
+            if not entries:
+                self.retry_state.pop(talker, None)
+        return expired
 
     def schedule_retry(
         self,
@@ -517,6 +550,11 @@ class PollState:
         now: float,
         reply_text: str,
         delay: float = SEND_RETRY_DELAY_SECONDS,
+        *,
+        chat_name: str = "",
+        is_group: bool = False,
+        message_timestamp: float = 0.0,
+        sender_name: str = "",
     ) -> int:
         entries = self.retry_state.setdefault(talker, {})
         attempts = int(entries.get(message_id, {}).get("attempts", 0)) + 1
@@ -524,6 +562,43 @@ class PollState:
             "attempts": attempts,
             "next_at": now + delay,
             "reply_text": reply_text,
+            "chat_name": chat_name,
+            "is_group": bool(is_group),
+            "message_timestamp": message_timestamp,
+            "sender_name": sender_name,
+        }
+        return attempts
+
+    def schedule_deferred_retry(
+        self,
+        talker: str,
+        message_id: str,
+        now: float,
+        reply_text: str,
+        delay: float,
+        *,
+        chat_name: str = "",
+        is_group: bool = False,
+        message_timestamp: float = 0.0,
+        sender_name: str = "",
+    ) -> int:
+        """用户忙碌时保留队列，不增加失败次数，也不因三次限制丢消息。"""
+        entries = self.retry_state.setdefault(talker, {})
+        current = entries.get(message_id, {})
+        attempts = int(current.get("attempts", 0))
+        deferred_at = float(current.get("deferred_at", now) or now)
+        entries[message_id] = {
+            "attempts": attempts,
+            "next_at": now + max(1.0, delay),
+            "reply_text": reply_text,
+            "chat_name": chat_name,
+            "is_group": bool(is_group),
+            "message_timestamp": message_timestamp,
+            "sender_name": sender_name,
+            "deferred": True,
+            # 重试时沿用首次入队时间，避免用户持续操作电脑时不断刷新
+            # 有效期，导致一条过时回复永久留在队列里。
+            "deferred_at": deferred_at,
         }
         return attempts
 
@@ -595,6 +670,8 @@ class EngineClient:
                     "text": message.text,
                     "message_type": message.message_type,
                     "ocr_text": message.ocr_text,
+                    "media_data": message.media_data,
+                    "media_mime_type": message.media_mime_type,
                     "batch_size": message.batch_size,
                     "sender_name": message.sender_name,
                     "is_group": message.is_group,
@@ -603,7 +680,6 @@ class EngineClient:
                     "platform": "tracememo",
                     "account": "personal-wechat",
                 },
-                headers=self._headers,
                 timeout=45,
             )
             response.raise_for_status()
@@ -614,7 +690,7 @@ class EngineClient:
 
 
 class MediaRecognizer:
-    """对新收到的图片/表情包做一次本地 OCR，失败时保留明确占位信息。"""
+    """下载媒体做本地 OCR，并为视觉模型保留一次性的 base64 内容。"""
 
     def __init__(
         self,
@@ -682,21 +758,57 @@ class MediaRecognizer:
             logger.debug("媒体 OCR 失败", exc_info=True)
             return ""
 
+    @staticmethod
+    def _mime_type(path: Path, data: bytes) -> str:
+        """按文件头识别常见图片格式，避免把二进制扩展名猜错。"""
+
+        if data.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "image/png"
+        if data.startswith(b"\xff\xd8\xff"):
+            return "image/jpeg"
+        if data.startswith((b"GIF87a", b"GIF89a")):
+            return "image/gif"
+        if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+            return "image/webp"
+        return {
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".gif": "image/gif",
+            ".webp": "image/webp",
+        }.get(path.suffix.lower(), "image/jpeg")
+
     def enrich(self, message: ChatMessage) -> ChatMessage:
         if message.message_type not in {"image", "sticker"}:
             return message
         label = "图片" if message.message_type == "image" else "表情包"
         ocr_text = ""
+        media_data = ""
+        media_mime_type = ""
         if message.media_url:
             with tempfile.TemporaryDirectory(prefix="wxauto-media-") as temp_dir:
                 image_path = Path(temp_dir) / "media.bin"
                 if self._download(message.media_url, image_path):
                     ocr_text = self._ocr(image_path)
+                    try:
+                        raw = image_path.read_bytes()
+                    except OSError:
+                        raw = b""
+                    if raw and len(raw) <= self._max_bytes:
+                        media_data = base64.b64encode(raw).decode("ascii")
+                        media_mime_type = self._mime_type(image_path, raw)
         if ocr_text:
             text = f"【{label}】图片文字：{ocr_text}"
         else:
             text = f"【{label}】（暂未识别到图片中的文字）"
-        return dataclasses.replace(message, text=text, ocr_text=ocr_text, media_url="")
+        return dataclasses.replace(
+            message,
+            text=text,
+            ocr_text=ocr_text,
+            media_url="",
+            media_data=media_data,
+            media_mime_type=media_mime_type,
+        )
 
 
 class DraftWriter:
@@ -757,6 +869,10 @@ def _combine_messages(messages: list[ChatMessage]) -> ChatMessage:
         ),
         message_type="batch",
         ocr_text="\n".join(message.ocr_text for message in messages if message.ocr_text),
+        media_data=next((message.media_data for message in messages if message.media_data), ""),
+        media_mime_type=next(
+            (message.media_mime_type for message in messages if message.media_data), ""
+        ),
         message_ids=tuple(message.message_id for message in messages),
         batch_size=len(messages),
     )
@@ -771,6 +887,7 @@ class TickStats:
     skipped: int = 0
     sent: int = 0
     send_failures: int = 0
+    deferred: int = 0
     errors: int = 0
 
 
@@ -792,6 +909,7 @@ class Poller:
         media_recognizer: MediaRecognizer | None = None,
         merge_window_seconds: float = 8.0,
         replay_offline: bool = False,
+        deferred_reply_expiry_seconds: float = 600.0,
         fetch_workers: int = 4,
     ) -> None:
         self._trace_memo = trace_memo
@@ -810,6 +928,7 @@ class Poller:
         self._media_recognizer = media_recognizer or MediaRecognizer()
         self._merge_window_seconds = max(1.0, merge_window_seconds)
         self._skip_startup_history = not replay_offline
+        self._deferred_reply_expiry_seconds = max(1.0, float(deferred_reply_expiry_seconds))
         self._fetch_workers = max(1, min(int(fetch_workers), 8))
 
     def _new_messages_for_conversation(
@@ -955,6 +1074,27 @@ class Poller:
         try:
             self._sender.send(message.chat_name, reply_text, is_group=message.is_group)
         except Exception as exc:  # GUI 失败不能拖垮轮询器
+            if bool(getattr(exc, "defer_retry", False)):
+                delay = float(getattr(exc, "retry_after", 15.0) or 15.0)
+                self._state.schedule_deferred_retry(
+                    message.talker,
+                    message.message_id,
+                    time.time(),
+                    reply_text,
+                    delay,
+                    chat_name=message.chat_name,
+                    is_group=message.is_group,
+                    message_timestamp=message.timestamp,
+                    sender_name=message.sender_name,
+                )
+                stats.deferred += 1
+                logger.info(
+                    "%s 暂缓发送，已进入等待队列，将在 %.0f 秒后再次检查：%s",
+                    message.chat_name,
+                    delay,
+                    exc,
+                )
+                return
             stats.send_failures += 1
             send_attempted = bool(getattr(exc, "send_attempted", False))
             if send_attempted:
@@ -980,6 +1120,10 @@ class Poller:
                 message.message_id,
                 time.time(),
                 reply_text,
+                chat_name=message.chat_name,
+                is_group=message.is_group,
+                message_timestamp=message.timestamp,
+                sender_name=message.sender_name,
             )
             logger.warning(
                 "%s 发送失败，将在 %.0f 秒后进行第 %d/%d 次重试：%s",
@@ -1032,6 +1176,13 @@ class Poller:
 
     def tick(self) -> TickStats:
         now = time.time()
+        expired = self._state.expire_deferred_retries(
+            now,
+            self._deferred_reply_expiry_seconds,
+        )
+        if expired:
+            logger.info("已清理 %d 条超过 %.0f 分钟的暂缓回复", expired, self._deferred_reply_expiry_seconds / 60)
+            self._state.save()
         # 默认启动时把当前历史视为基线，避免补回停机期间已经被人工读过的消息。
         # --replay-offline 会保留旧游标，显式开启离线追补。
         previous_poll = now if self._skip_startup_history else self._state.last_polled_at
@@ -1063,9 +1214,30 @@ class Poller:
                 continue
             assert messages is not None
             # 未完成的安全重试优先执行，但不会影响新消息的分批。
-            for message in messages:
+            retry_messages = list(messages)
+            known_message_ids = {message.message_id for message in retry_messages}
+            # 队列记录带有会话元数据；即使 TraceMemo 的当天窗口已不再
+            # 返回原消息，仍可安全重试，而不会让队列永久悬挂。
+            for message_id, meta in self._state.retry_entries(conversation.talker):
+                if message_id in known_message_ids:
+                    continue
+                retry_messages.append(
+                    ChatMessage(
+                        message_id=message_id,
+                        talker=conversation.talker,
+                        chat_name=str(meta.get("chat_name") or conversation.name),
+                        text="",
+                        timestamp=float(meta.get("message_timestamp", now) or now),
+                        sender_name=str(meta.get("sender_name") or conversation.name),
+                        is_group=bool(meta.get("is_group", conversation.is_group)),
+                        outgoing=False,
+                    )
+                )
+            for message in retry_messages:
+                if not self._state.has_retry(message.talker, message.message_id):
+                    continue
                 retry_attempt = self._state.retry_attempts(message.talker, message.message_id)
-                if not retry_attempt or not self._state.retry_ready(message.talker, message.message_id, now):
+                if not self._state.retry_ready(message.talker, message.message_id, now):
                     continue
                 reply_text = self._state.retry_text(message.talker, message.message_id)
                 if not reply_text:
@@ -1073,7 +1245,12 @@ class Poller:
                     self._state.clear_retry(message.talker, message.message_id)
                     continue
                 stats.retries_attempted += 1
-                logger.info("%s 开始第 %d/%d 次发送重试", message.chat_name, retry_attempt, MAX_SEND_RETRIES)
+                logger.info(
+                    "%s 重新尝试发送（已有失败次数 %d/%d）",
+                    message.chat_name,
+                    retry_attempt,
+                    MAX_SEND_RETRIES,
+                )
                 self._send_reply(message, reply_text, stats, retry_attempt=retry_attempt)
 
             fresh = self._new_messages_for_conversation(messages, previous_poll, stats)
@@ -1094,12 +1271,13 @@ class Poller:
         self._skip_startup_history = False
         if stats.new_messages:
             logger.info(
-                "本轮状态：检测到 %d 条新消息，生成 %d 条草稿，发送成功 %d 条，跳过 %d 条，发送失败 %d 条",
+                "本轮状态：检测到 %d 条新消息，生成 %d 条草稿，发送成功 %d 条，跳过 %d 条，发送失败 %d 条，暂缓 %d 条",
                 stats.new_messages,
                 stats.drafts_generated,
                 stats.sent,
                 stats.skipped,
                 stats.send_failures,
+                stats.deferred,
             )
         return stats
 
@@ -1263,7 +1441,14 @@ def main() -> int:
                 return 1
             from macos.wechat_sender import WeChatSender
 
-            sender = WeChatSender(repo_dir=REPO_DIR)
+            sender = WeChatSender(
+                repo_dir=REPO_DIR,
+                quiet_mode=config.sending.quiet_mode,
+                only_when_user_idle=config.sending.only_when_user_idle,
+                user_idle_seconds=config.sending.user_idle_seconds,
+                allow_frontmost_switch=config.sending.allow_frontmost_switch,
+                deferred_retry_seconds=config.sending.deferred_retry_seconds,
+            )
         poller = Poller(
             trace_memo,
             EngineClient(args.engine_url, engine_token),
@@ -1279,6 +1464,7 @@ def main() -> int:
             style_signature=config.signature,
             merge_window_seconds=args.merge_window,
             replay_offline=args.replay_offline,
+            deferred_reply_expiry_seconds=config.sending.deferred_reply_expiry_seconds,
             fetch_workers=args.fetch_workers,
         )
     except (OSError, TraceMemoError) as exc:

@@ -26,4 +26,15 @@ python ios/appium/wechat_ios_bot.py --dry-run
 
 对普通 iPhone 用户，推荐让同账号的 macOS 微信代为回复。这样不修改 iPhone、不要求越狱，也不长期占用手机前台。
 
+## 路线三：Objective-C 控制端
+
+目录：[`companion/`](companion/)
+
+这是一个普通的 UIKit App，只控制 Mac 上的服务状态、日志和安全配置。它不读取微信，不能
+替代 Mac 端的 TraceMemo 轮询器和微信发送器。构建与局域网配对步骤见
+[`companion/README.md`](companion/README.md)。
+
+从仓库根目录执行 `bash scripts/build-ios-companion.sh` 可生成模拟器包，并在签名条件具备时
+导出 iPhone 用的 `dist/TraceMemoRemote.ipa`。
+
 路线比较、限制和风险见 [`../docs/ios-feasibility.md`](../docs/ios-feasibility.md)。Agent 修改本模块前应读取 [`MEMORY.md`](MEMORY.md)。

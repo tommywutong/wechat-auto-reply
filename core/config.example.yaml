@@ -32,6 +32,14 @@ scope:
     - "面试"
     - "合同"
 
+sending:
+  quiet_mode: true
+  only_when_user_idle: true
+  user_idle_seconds: 1.5
+  allow_frontmost_switch: true
+  deferred_retry_seconds: 15
+  deferred_reply_expiry_seconds: 600  # 用户忙碌时的排队回复最多保留 10 分钟
+
 limits:
   per_chat_cooldown_seconds: 1800     # 同一会话两次自动回复的最小间隔
   max_replies_per_chat_per_day: 5     # 同一会话每天最多回几条

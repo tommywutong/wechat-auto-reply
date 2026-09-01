@@ -17,6 +17,23 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 
+# This is a local, provider-neutral adaptation of the public Grok 4.1
+# response guidance. Product-specific capabilities (X search, tools, model
+# identity, dates) are intentionally excluded; the existing hard rules stay
+# authoritative for a WeChat sender.
+STYLE_PRESETS: dict[str, str] = {
+    "grok4_1": (
+        "说话直接、清楚、少客套，先给结论再补必要解释。\n"
+        "保持坦率和真实；不知道时明确说不知道，不用含糊其辞来装懂。\n"
+        "可以表达判断，也可以指出对方前提不成立，但要说明理由，别为了讨好而附和。\n"
+        "在熟人和轻松语境下，可以偶尔使用机智、幽默、轻微吐槽或反讽；"
+        "不要每条消息都开玩笑，也不要为了笑点牺牲准确性。\n"
+        "遇到严肃、敏感、悲伤、冲突或需要本人确认的事情，自动收起幽默，"
+        "用稳定、尊重的语气回答。幽默不能针对身份、外貌、疾病、创伤或隐私。"
+    ),
+}
+
+
 @dataclass
 class Example:
     """一组示范对话，用来教语气。
@@ -55,6 +72,9 @@ class Persona:
     """回复长度上限。真人回微信很少写长段。"""
 
     examples: list[Example] = field(default_factory=list)
+
+    style_preset: str = ""
+    """内置表达风格预设；空值表示只使用自定义人设。"""
 
     def is_configured(self) -> bool:
         """没写人设就退回规则模式——用空人设生成只会得到客服腔。"""
@@ -125,6 +145,7 @@ def build_persona(data: dict) -> Persona:
         boundaries=[str(b).strip() for b in (data.get("boundaries") or []) if str(b).strip()],
         max_chars=int(data.get("max_chars", 40)),
         examples=examples,
+        style_preset=str(data.get("style_preset", "")).strip().lower(),
     )
 
 
@@ -147,6 +168,14 @@ def build_system_prompt(persona: Persona, style_context: str = "") -> str:
 
     if persona.playbook:
         parts.append(f"# 遇到各种情况怎么应对\n{persona.playbook}")
+
+    preset = STYLE_PRESETS.get(persona.style_preset)
+    if preset:
+        parts.append(
+            "# 表达风格预设\n"
+            "以下只补充措辞和幽默程度，不改变你的身份、会话范围、发送限制或安全边界。\n"
+            f"{preset}"
+        )
 
     if style_context.strip():
         parts.append(

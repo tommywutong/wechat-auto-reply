@@ -147,7 +147,7 @@ def test_sidebar_fingerprint_tracks_visible_rows() -> None:
     assert sender._sidebar_fingerprint(first) != sender._sidebar_fingerprint(second)
 
 
-def test_sidebar_click_scans_visible_list_then_small_scrolls(tmp_path: Path, monkeypatch) -> None:
+def test_sidebar_click_scans_visible_list_then_broad_scrolls(tmp_path: Path, monkeypatch) -> None:
     instance = sender.WeChatSender(repo_dir=tmp_path)
     bounds = sender.WindowBounds(10, 20, 1200, 800)
     calls: list[tuple[str, object]] = []
@@ -166,9 +166,17 @@ def test_sidebar_click_scans_visible_list_then_small_scrolls(tmp_path: Path, mon
     monkeypatch.setattr(sender.time, "sleep", lambda _: None)
 
     assert instance._click_sidebar_target(bounds, "Biscoffee")
-    assert calls[0] == ("scroll", 6)
+    assert calls[0] == ("scroll", 35)
     assert calls[1][0] == "click"
     assert all(kind != "scroll" for kind, _ in calls[1:])
+
+
+def test_sidebar_scroll_plan_covers_down_and_reverse_directions() -> None:
+    deltas = sender.WeChatSender._SIDEBAR_SCROLL_DELTAS
+
+    assert deltas[:8] == (35,) * 8
+    assert deltas[8:] == (-35,) * 16
+    assert sum(abs(delta) for delta in deltas) == 840
 
 
 def test_sender_error_records_whether_final_action_was_attempted() -> None:
@@ -177,6 +185,45 @@ def test_sender_error_records_whether_final_action_was_attempted() -> None:
 
     assert before_send.send_attempted is False
     assert after_send.send_attempted is True
+
+
+def test_quiet_sender_defers_while_user_is_active(tmp_path: Path, monkeypatch) -> None:
+    instance = sender.WeChatSender(
+        repo_dir=tmp_path,
+        quiet_mode=True,
+        only_when_user_idle=True,
+        user_idle_seconds=1.5,
+        deferred_retry_seconds=12,
+    )
+    monkeypatch.setattr(instance, "_user_idle_for", lambda: 0.4)
+
+    try:
+        instance._ensure_user_idle("发送前")
+    except sender.DeferredSendError as exc:
+        assert exc.defer_retry is True
+        assert exc.send_attempted is False
+        assert exc.retry_after == 12
+    else:
+        raise AssertionError("expected active user to defer sending")
+
+
+def test_quiet_sender_allows_send_after_idle_threshold(tmp_path: Path, monkeypatch) -> None:
+    instance = sender.WeChatSender(
+        repo_dir=tmp_path,
+        quiet_mode=True,
+        only_when_user_idle=True,
+        user_idle_seconds=1.5,
+    )
+    monkeypatch.setattr(instance, "_user_idle_for", lambda: 2.0)
+
+    instance._ensure_user_idle("发送前")
+
+
+def test_disabled_quiet_mode_does_not_require_idle_helper(tmp_path: Path, monkeypatch) -> None:
+    instance = sender.WeChatSender(repo_dir=tmp_path, quiet_mode=False)
+    monkeypatch.setattr(instance, "_user_idle_for", lambda: None)
+
+    instance._ensure_user_idle("发送前")
 
 
 def test_post_send_check_tolerates_transient_ocr_residue(tmp_path: Path, monkeypatch) -> None:

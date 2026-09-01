@@ -77,6 +77,50 @@ def test_poll_state_keeps_only_recent_message_ids(tmp_path: Path) -> None:
     assert state.seen_ids["wxid-a"] == [str(index) for index in range(5, 205)]
 
 
+def test_poll_state_expires_stale_deferred_retries_but_keeps_normal_failures(tmp_path: Path) -> None:
+    state = poller.PollState(tmp_path / "state.json")
+    state.schedule_deferred_retry(
+        "wxid-a",
+        "deferred-old",
+        now=1_000,
+        reply_text="旧的暂缓回复",
+        delay=15,
+        message_timestamp=1_000,
+    )
+    state.schedule_deferred_retry(
+        "wxid-a",
+        "deferred-new",
+        now=1_500,
+        reply_text="新的暂缓回复",
+        delay=15,
+        message_timestamp=1_500,
+    )
+    state.schedule_deferred_retry(
+        "wxid-a",
+        "deferred-new",
+        now=1_590,
+        reply_text="新的暂缓回复",
+        delay=15,
+        message_timestamp=1_500,
+    )
+    state.schedule_retry(
+        "wxid-a",
+        "failed-send",
+        now=1_000,
+        reply_text="普通失败重试",
+        delay=15,
+        message_timestamp=1_000,
+    )
+
+    expired = state.expire_deferred_retries(now=1_601, max_age_seconds=600)
+
+    assert expired == 1
+    assert not state.has_retry("wxid-a", "deferred-old")
+    assert state.has_retry("wxid-a", "deferred-new")
+    assert state.retry_state["wxid-a"]["deferred-new"]["deferred_at"] == 1_500
+    assert state.has_retry("wxid-a", "failed-send")
+
+
 def test_text_type_filter_rejects_non_text_messages() -> None:
     assert poller._is_text_message({"type": 1}) is True
     assert poller._is_text_message({"type": "text"}) is True
@@ -174,6 +218,54 @@ def test_media_recognizer_adds_ocr_text(monkeypatch, tmp_path: Path) -> None:
 
     assert enriched.ocr_text == "会议改到三点"
     assert enriched.text == "【图片】图片文字：会议改到三点"
+
+
+def test_media_recognizer_keeps_image_as_base64_for_vision(monkeypatch, tmp_path: Path) -> None:
+    recognizer = poller.MediaRecognizer(repo_dir=tmp_path)
+
+    def download(_url, path):
+        path.write_bytes(b"\x89PNG\r\n\x1a\nimage")
+        return True
+
+    monkeypatch.setattr(recognizer, "_download", download)
+    monkeypatch.setattr(recognizer, "_ocr", lambda path: "图片文字")
+    message = poller.ChatMessage(
+        "image-1", "wxid-a", "Loky", "【图片】", 1_700_000_000, "Loky", False, False,
+        message_type="image", media_url="https://example.test/image.png",
+    )
+
+    enriched = recognizer.enrich(message)
+
+    assert enriched.media_mime_type == "image/png"
+    assert enriched.media_data == "iVBORw0KGgppbWFnZQ=="
+
+
+def test_engine_client_sends_media_fields(monkeypatch) -> None:
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"should_reply": False, "reason": "test"}
+
+    captured = {}
+
+    class Session:
+        def post(self, url, **kwargs):
+            captured.update(kwargs)
+            return Response()
+
+    client = poller.EngineClient("http://127.0.0.1:8848", "token")
+    client._session = Session()
+    client.draft(
+        poller.ChatMessage(
+            "m", "wxid-a", "Loky", "【图片】", 1_700_000_000, "Loky", False, False,
+            message_type="image", media_data="abc", media_mime_type="image/png",
+        )
+    )
+
+    assert captured["json"]["media_data"] == "abc"
+    assert captured["json"]["media_mime_type"] == "image/png"
 
 
 class _CapturingEngine:
@@ -444,6 +536,21 @@ class _RetryingSender:
             raise RuntimeError("输入区未确认")
 
 
+class _DeferredSender:
+    def __init__(self) -> None:
+        self.calls = []
+        self.busy = True
+
+    def send(self, target_name, text, *, is_group=False):
+        self.calls.append((target_name, text))
+        if self.busy:
+            error = RuntimeError("用户正在操作电脑")
+            error.defer_retry = True
+            error.retry_after = 15.0
+            error.send_attempted = False
+            raise error
+
+
 def test_poller_send_mode_can_be_limited_to_biscoffee(tmp_path: Path) -> None:
     now = 1_800_000_000
     messages = [
@@ -598,3 +705,94 @@ def test_poller_retries_only_unattempted_send_failure(tmp_path: Path) -> None:
 
     assert sender.calls == [("Biscoffee", "收到"), ("Biscoffee", "收到")]
     assert state.retry_attempts("biscoffee-id", "m1") == 0
+
+
+def test_user_activity_keeps_persistent_queue_without_consuming_retries(tmp_path: Path) -> None:
+    now = 1_800_000_000
+    message = poller.ChatMessage(
+        "m1", "biscoffee-id", "Biscoffee", "你好", now, "Biscoffee", False, False
+    )
+    sender = _DeferredSender()
+    state_path = tmp_path / "state.json"
+    state = poller.PollState(state_path)
+    state.ready_talkers.add("biscoffee-id")
+    state.last_polled_at = now - 10
+    instance = poller.Poller(
+        _FakeTraceMemo([message]),
+        _FakeEngine(),
+        {"biscoffee"},
+        state,
+        poller.DraftWriter(tmp_path / "drafts.jsonl"),
+        sender=sender,
+        send_name="Biscoffee",
+        replay_offline=True,
+    )
+    original_time = poller.time.time
+    poller.time.time = lambda: now
+    try:
+        stats = instance.tick()
+    finally:
+        poller.time.time = original_time
+
+    assert stats.deferred == 1
+    assert stats.send_failures == 0
+    assert state.has_retry("biscoffee-id", "m1")
+    assert state.retry_attempts("biscoffee-id", "m1") == 0
+    assert state.retry_state["biscoffee-id"]["m1"]["deferred_at"] == now
+
+    reloaded = poller.PollState(state_path)
+    reloaded.retry_state["biscoffee-id"]["m1"]["next_at"] = now - 1
+    reloaded.save()
+    sender.busy = False
+    resumed = poller.Poller(
+        _FakeTraceMemo([message]),
+        _FakeEngine(),
+        {"biscoffee"},
+        reloaded,
+        poller.DraftWriter(tmp_path / "drafts.jsonl"),
+        sender=sender,
+        send_name="Biscoffee",
+        replay_offline=True,
+    )
+    poller.time.time = lambda: now
+    try:
+        resumed.tick()
+    finally:
+        poller.time.time = original_time
+
+    assert sender.calls == [("Biscoffee", "收到"), ("Biscoffee", "收到")]
+    assert not reloaded.has_retry("biscoffee-id", "m1")
+
+
+def test_poller_drops_expired_deferred_retry_before_sending(tmp_path: Path) -> None:
+    now = 1_800_000_000
+    state = poller.PollState(tmp_path / "state.json")
+    state.ready_talkers.add("biscoffee-id")
+    state.schedule_deferred_retry(
+        "biscoffee-id",
+        "old-message",
+        now=now - 601,
+        reply_text="已经过时",
+        delay=15,
+        message_timestamp=now - 601,
+    )
+    sender = _FakeSender()
+    instance = poller.Poller(
+        _FakeTraceMemo([]),
+        _FakeEngine(),
+        {"biscoffee"},
+        state,
+        poller.DraftWriter(tmp_path / "drafts.jsonl"),
+        sender=sender,
+        send_name="Biscoffee",
+        deferred_reply_expiry_seconds=600,
+    )
+    original_time = poller.time.time
+    poller.time.time = lambda: now
+    try:
+        instance.tick()
+    finally:
+        poller.time.time = original_time
+
+    assert sender.calls == []
+    assert not state.has_retry("biscoffee-id", "old-message")

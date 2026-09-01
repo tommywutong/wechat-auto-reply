@@ -8,7 +8,7 @@ from datetime import time as dtime
 from pathlib import Path
 from typing import Any, Optional
 
-from .persona import Persona, build_persona
+from .persona import STYLE_PRESETS, Persona, build_persona
 from .providers import ANTHROPIC, PROVIDERS, describe, is_openai_compatible
 
 import yaml
@@ -81,6 +81,19 @@ class Scope:
 
 
 @dataclass
+class SendingSettings:
+    """界面发送策略；默认只在用户空闲时短暂切换微信。"""
+
+    quiet_mode: bool = True
+    only_when_user_idle: bool = True
+    user_idle_seconds: float = 1.5
+    allow_frontmost_switch: bool = True
+    deferred_retry_seconds: float = 15.0
+    deferred_reply_expiry_seconds: int = 600
+    """用户忙碌时排队的回复最多保留多久，默认 10 分钟。"""
+
+
+@dataclass
 class LLMSettings:
     enabled: bool = False
     provider: str = "anthropic"
@@ -96,6 +109,11 @@ class LLMSettings:
     effort: str = "low"
     style: str = "用简短口语化的中文回复，不超过 30 个字。"
     persona: str = ""
+    vision_provider: str = "qwen_bailian"
+    vision_model: str = "qwen3-vl-flash"
+    vision_fallback_model: str = "qwen3-vl-plus"
+    vision_base_url: str = ""
+    vision_enabled: bool = True
 
 
 @dataclass
@@ -115,6 +133,7 @@ class Config:
     signature: str = ""
     active_hours: list[tuple[dtime, dtime]] = field(default_factory=list)
     scope: Scope = field(default_factory=Scope)
+    sending: SendingSettings = field(default_factory=SendingSettings)
     limits: Limits = field(default_factory=Limits)
     rules: list[Rule] = field(default_factory=list)
     fallback: Fallback = field(default_factory=Fallback)
@@ -187,6 +206,22 @@ def build_config(data: dict[str, Any]) -> Config:
     if limits.min_delay_seconds > limits.max_delay_seconds:
         raise ConfigError("limits.min_delay_seconds 不能大于 max_delay_seconds")
 
+    sending_raw = data.get("sending") or {}
+    sending = SendingSettings(
+        quiet_mode=bool(sending_raw.get("quiet_mode", True)),
+        only_when_user_idle=bool(sending_raw.get("only_when_user_idle", True)),
+        user_idle_seconds=float(sending_raw.get("user_idle_seconds", 1.5)),
+        allow_frontmost_switch=bool(sending_raw.get("allow_frontmost_switch", True)),
+        deferred_retry_seconds=float(sending_raw.get("deferred_retry_seconds", 15.0)),
+        deferred_reply_expiry_seconds=int(sending_raw.get("deferred_reply_expiry_seconds", 600)),
+    )
+    if not 0 <= sending.user_idle_seconds <= 60:
+        raise ConfigError("sending.user_idle_seconds 应在 0 到 60 秒之间")
+    if not 1 <= sending.deferred_retry_seconds <= 3600:
+        raise ConfigError("sending.deferred_retry_seconds 应在 1 到 3600 秒之间")
+    if not 60 <= sending.deferred_reply_expiry_seconds <= 86_400:
+        raise ConfigError("sending.deferred_reply_expiry_seconds 应在 60 到 86400 秒之间")
+
     fallback_raw = data.get("fallback") or {}
     fallback_kind = fallback_raw.get("type", "text")
     if fallback_kind not in ("llm", "text", "none"):
@@ -199,6 +234,11 @@ def build_config(data: dict[str, Any]) -> Config:
         )
 
     persona = build_persona(data.get("persona") or {})
+    if persona.style_preset and persona.style_preset not in STYLE_PRESETS:
+        raise ConfigError(
+            f"persona.style_preset 只能是空值或 {', '.join(sorted(STYLE_PRESETS))}，"
+            f"收到 {persona.style_preset!r}"
+        )
     if mode == "ai" and not persona.is_configured():
         raise ConfigError(
             "reply_mode 为 ai 时必须配置 persona.identity 或 persona.playbook，"
@@ -224,7 +264,16 @@ def build_config(data: dict[str, Any]) -> Config:
         effort=llm_raw.get("effort", "low"),
         style=llm_raw.get("style", LLMSettings.style),
         persona=llm_raw.get("persona", ""),
+        vision_provider=str(llm_raw.get("vision_provider", "qwen_bailian")).strip().lower(),
+        vision_model=str(llm_raw.get("vision_model", "qwen3-vl-flash")).strip(),
+        vision_fallback_model=str(llm_raw.get("vision_fallback_model", "qwen3-vl-plus")).strip(),
+        vision_base_url=str(llm_raw.get("vision_base_url", "")).strip(),
+        vision_enabled=bool(llm_raw.get("vision_enabled", True)),
     )
+    if llm.vision_enabled and llm.vision_provider and llm.vision_provider not in PROVIDERS:
+        raise ConfigError(
+            f"llm.vision_provider 只能是 {describe()}，收到 {llm.vision_provider!r}"
+        )
 
     return Config(
         enabled=bool(data.get("enabled", True)),
@@ -241,6 +290,7 @@ def build_config(data: dict[str, Any]) -> Config:
             block_contacts=list(scope_raw.get("block_contacts") or []),
             block_keywords=list(scope_raw.get("block_keywords") or []),
         ),
+        sending=sending,
         limits=limits,
         rules=[_parse_rule(r, i) for i, r in enumerate(data.get("rules") or [])],
         fallback=Fallback(kind=fallback_kind, text=fallback_raw.get("text", "")),

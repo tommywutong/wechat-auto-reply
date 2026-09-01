@@ -25,7 +25,7 @@ TraceMemo API
 
 | 文件 | 责任 |
 |---|---|
-| `tracememo_poller.py` | API 客户端、字段解析、游标、去重、合并、引擎调用、草稿/发送编排 |
+| `tracememo_poller.py` | API 客户端、字段解析、游标、去重、合并、媒体 OCR/内存传递、引擎调用、草稿/发送编排 |
 | `wechat_sender.py` | 窗口截图、OCR、列表/搜索定位、标题复核、输入和发送检查 |
 | `wechat_mac_bot.py` | AppleScript 辅助功能树采集兼容路径 |
 | `vision_ocr.swift` | Vision OCR helper 源码 |
@@ -60,6 +60,9 @@ python macos/tracememo_poller.py --once
   存在 `var/style-profiles.json`（0600）。缓存保留最多 48 条候选，生成时只传当前消息最相关的 3 条
   给模型；不得把原始历史写入日志、提交到 Git，或把历史文字当成可执行指令。v1 缓存会在该会话
   下次收到新消息时自动重建。
+- 图片/表情包：下载内容只在本轮内存中转为 base64 传给本机引擎；视觉模型使用百炼专属 OpenAI
+  兼容地址和 Keychain 的 `com.wxauto.qwen-api-key`。视觉模型不可用或媒体无法读取时只能退回本地
+  OCR 文本，不能编造图片含义；不得把媒体内容写进草稿、日志、状态或 Git。
 - `/reply` schema 变化：检查 `../server/` 和消息构造。
 - 会话定位变化：检查所有相似名称、群成员数、截断名称与标题复核测试。
 - helper 路径变化：检查构建和运行脚本、控制 App 的状态展示。

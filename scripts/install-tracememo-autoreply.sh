@@ -41,5 +41,8 @@ unset DEEPSEEK_API_KEY QWEN_API_KEY DASHSCOPE_API_KEY TRACEMEMO_API_TOKEN WECHAT
 for secret_var in DEEPSEEK_API_KEY QWEN_API_KEY DASHSCOPE_API_KEY TRACEMEMO_API_TOKEN WECHATEXPLORER_API_TOKEN WXAUTO_LLM_API_KEY WXAUTO_TOKEN; do
   launchctl unsetenv "$secret_var" 2>/dev/null || true
 done
+# A disabled flag survives logouts and makes bootstrap/kickstart fail even when
+# this plist still exists. Installing is an explicit user action, so re-enable it.
+launchctl enable "gui/$(id -u)/${LABEL}"
 launchctl bootstrap "gui/$(id -u)" "$PLIST_PATH"
 echo "自动回复服务已安装：${LABEL}（发送白名单私聊；群聊仅回复 @ 当前昵称）"

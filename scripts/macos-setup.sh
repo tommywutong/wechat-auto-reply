@@ -122,8 +122,10 @@ EOF
 # 你朋友的安卓跑的是他自己那套（见 scripts/termux-setup.sh），不连你这台。
 
 echo "==> 加载服务"
-launchctl unload "$PLIST_PATH" 2>/dev/null || true
-launchctl load "$PLIST_PATH"
+launchctl bootout "gui/$(id -u)/${PLIST_LABEL}" 2>/dev/null || true
+# 这个标记在重启或手动停止后仍可能保留；不先启用，下面的 bootstrap 会直接失败。
+launchctl enable "gui/$(id -u)/${PLIST_LABEL}"
+launchctl bootstrap "gui/$(id -u)" "$PLIST_PATH"
 sleep 2
 
 echo

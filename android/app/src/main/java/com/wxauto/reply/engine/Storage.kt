@@ -44,11 +44,13 @@ object Storage {
         // 默认关闭：装完不会立刻开始替用户发消息，
         // 必须由用户主动打开开关。
         enabled = false,
-        signature = "（自动回复）",
         activeFromMinute = -1,
         activeToMinute = -1,
         replyToPrivate = true,
         groupPolicy = GroupPolicy.NEVER,   // 群消息默认全关，避免刷屏
+        // Android 与 Mac 端一致：默认不附加机器标记。是否启用自动回复由用户自行决定，
+        // 不应该每条消息都被固定尾注破坏原本语气。
+        signature = "",
         cooldownSeconds = 1800,
         maxPerChatPerDay = 5,
         maxPerHour = 30,
@@ -100,6 +102,7 @@ object Storage {
         put("activeToMinute", c.activeToMinute)
         put("replyToPrivate", c.replyToPrivate)
         put("groupPolicy", c.groupPolicy.name)
+        put("selfNicknames", JSONArray(c.selfNicknames))
         put("allowContacts", JSONArray(c.allowContacts))
         put("blockContacts", JSONArray(c.blockContacts))
         put("blockKeywords", JSONArray(c.blockKeywords))
@@ -119,11 +122,26 @@ object Storage {
             put("playbook", c.persona.playbook)
             put("boundaries", JSONArray(c.persona.boundaries))
             put("maxChars", c.persona.maxChars)
+            put("stylePreset", c.persona.stylePreset)
             put("examples", JSONArray().apply {
                 c.persona.examples.forEach {
                     put(JSONObject().put("them", it.them).put("me", it.me))
                 }
             })
+        })
+        put("styleProfiles", JSONArray().apply {
+            c.styleProfiles.forEach { profile ->
+                put(JSONObject().apply {
+                    put("displayName", profile.displayName)
+                    put("summary", profile.summary)
+                    put("sampleCount", profile.sampleCount)
+                    put("examples", JSONArray().apply {
+                        profile.examples.forEach { example ->
+                            put(JSONObject().put("them", example.them).put("me", example.me))
+                        }
+                    })
+                })
+            }
         })
         put("ai", JSONObject().apply {
             put("source", c.ai.source.name)
@@ -147,13 +165,18 @@ object Storage {
 
     private fun parseConfig(o: JSONObject): EngineConfig {
         val fallback = defaultConfig()
+        // v1 默认把“（自动回复）”硬编码进每条消息。现在默认不加尾注，
+        // 因此只迁移这一个旧默认值；用户手动填写的其他尾注保持原样。
+        val storedSignature = o.optString("signature", fallback.signature)
+        val signature = if (storedSignature == "（自动回复）") "" else storedSignature
         return EngineConfig(
             enabled = o.optBoolean("enabled", false),
-            signature = o.optString("signature", fallback.signature),
+            signature = signature,
             activeFromMinute = o.optInt("activeFromMinute", -1),
             activeToMinute = o.optInt("activeToMinute", -1),
             replyToPrivate = o.optBoolean("replyToPrivate", true),
             groupPolicy = GroupPolicy.from(o.optString("groupPolicy")),
+            selfNicknames = o.optJSONArray("selfNicknames").toStringList(),
             allowContacts = o.optJSONArray("allowContacts").toStringList(),
             blockContacts = o.optJSONArray("blockContacts").toStringList(),
             blockKeywords = o.optJSONArray("blockKeywords").toStringList(),
@@ -174,6 +197,7 @@ object Storage {
                     playbook = pj.optString("playbook"),
                     boundaries = pj.optJSONArray("boundaries").toStringList(),
                     maxChars = pj.optInt("maxChars", 35),
+                    stylePreset = pj.optString("stylePreset").trim().lowercase(),
                     examples = pj.optJSONArray("examples").let { arr ->
                         if (arr == null) emptyList() else (0 until arr.length()).mapNotNull { i ->
                             arr.optJSONObject(i)?.let { e ->
@@ -185,6 +209,7 @@ object Storage {
                     },
                 )
             },
+            styleProfiles = parseStoredStyleProfiles(o.optJSONArray("styleProfiles")),
             ai = o.optJSONObject("ai").let { aj ->
                 if (aj == null) AiConfig() else AiConfig(
                     source = AiSource.from(aj.optString("source")),
@@ -216,7 +241,89 @@ object Storage {
         return (0 until length()).mapNotNull { optString(it).takeIf { s -> s.isNotBlank() } }
     }
 
+    private fun parseStoredStyleProfiles(array: JSONArray?): List<StyleProfile> {
+        if (array == null) return emptyList()
+        return (0 until array.length()).mapNotNull { index ->
+            array.optJSONObject(index)?.let(::parseStyleProfile)
+        }.distinctBy { normalizeChatName(it.displayName) }
+    }
+
+    /**
+     * 导入 Mac 导出的脱敏画像。格式有意很窄：
+     *
+     * {"version":1,"profiles":[{"displayName":"...","summary":"...",
+     * "sampleCount":12,"examples":[{"them":"...","me":"..."}]}]}
+     *
+     * 稳定 talker、Token、完整聊天记录和任意未知字段都不接受。
+     */
+    fun importStyleProfiles(raw: String): StyleProfileImportResult = try {
+        val root = JSONObject(raw)
+        val rootKeys = root.keys().asSequence().toSet()
+        if (rootKeys != setOf("version", "profiles")) {
+            return StyleProfileImportResult(emptyList(), "画像文件字段不正确，只能包含 version 和 profiles")
+        }
+        if (root.optInt("version", -1) != 1) {
+            return StyleProfileImportResult(emptyList(), "不支持这个画像文件版本")
+        }
+        val array = root.optJSONArray("profiles")
+            ?: return StyleProfileImportResult(emptyList(), "画像文件缺少 profiles")
+        if (array.length() > MAX_STYLE_PROFILES) {
+            return StyleProfileImportResult(emptyList(), "画像数量超过 $MAX_STYLE_PROFILES 条上限")
+        }
+
+        val profiles = ArrayList<StyleProfile>(array.length())
+        val names = HashSet<String>()
+        for (index in 0 until array.length()) {
+            val profile = array.optJSONObject(index)
+                ?: return StyleProfileImportResult(emptyList(), "第 ${index + 1} 条画像不是对象")
+            val parsed = parseStyleProfile(profile, strict = true)
+                ?: return StyleProfileImportResult(emptyList(), "第 ${index + 1} 条画像格式不正确")
+            if (!names.add(normalizeChatName(parsed.displayName))) {
+                return StyleProfileImportResult(emptyList(), "画像中有重复的会话显示名")
+            }
+            profiles += parsed
+        }
+        StyleProfileImportResult(profiles)
+    } catch (_: Exception) {
+        StyleProfileImportResult(emptyList(), "不是可读取的画像 JSON 文件")
+    }
+
+    private fun parseStyleProfile(object_: JSONObject, strict: Boolean = false): StyleProfile? {
+        if (strict) {
+            val allowed = setOf("displayName", "summary", "sampleCount", "examples")
+            if (!object_.keys().asSequence().all { it in allowed }) return null
+            if (!setOf("displayName", "summary", "sampleCount", "examples").all(object_::has)) return null
+        }
+        val displayName = object_.optString("displayName").trim()
+        val summary = object_.optString("summary").trim()
+        val sampleCount = object_.optInt("sampleCount", 0)
+        val examples = object_.optJSONArray("examples") ?: return null
+        if (displayName.isBlank() || displayName.length > MAX_STYLE_NAME_LENGTH ||
+            summary.length > MAX_STYLE_SUMMARY_LENGTH || sampleCount !in 0..MAX_STYLE_SAMPLE_COUNT ||
+            examples.length() > MAX_STYLE_EXAMPLES
+        ) return null
+        val parsedExamples = ArrayList<AiExample>(examples.length())
+        for (index in 0 until examples.length()) {
+            val example = examples.optJSONObject(index) ?: return null
+            if (strict && (example.keys().asSequence().toSet() != setOf("them", "me"))) return null
+            val them = example.optString("them").trim()
+            val me = example.optString("me").trim()
+            if (them.isBlank() || me.isBlank() ||
+                them.length > MAX_STYLE_EXAMPLE_LENGTH || me.length > MAX_STYLE_EXAMPLE_LENGTH
+            ) return null
+            parsedExamples += AiExample(them, me)
+        }
+        return StyleProfile(displayName, summary, parsedExamples, sampleCount)
+    }
+
     // ------------------------------------------------------------------ 连接状态
+
+    private const val MAX_STYLE_PROFILES = 120
+    private const val MAX_STYLE_NAME_LENGTH = 80
+    private const val MAX_STYLE_SUMMARY_LENGTH = 600
+    private const val MAX_STYLE_SAMPLE_COUNT = 5_000
+    private const val MAX_STYLE_EXAMPLES = 48
+    private const val MAX_STYLE_EXAMPLE_LENGTH = 240
 
     private const val KEY_CONNECTED = "listener_connected"
 
@@ -270,7 +377,7 @@ object Storage {
     // ------------------------------------------------------------------ 最近联系人
 
     private const val KEY_SEEN = "seen_chats_json"
-    private const val MAX_SEEN = 60
+    private const val MAX_SEEN = 30
 
     /**
      * 记下最近有消息进来的会话名。

@@ -10,6 +10,8 @@ import android.view.accessibility.AccessibilityNodeInfo
 import com.wxauto.reply.engine.EngineHolder
 import com.wxauto.reply.engine.Message
 import com.wxauto.reply.engine.Storage
+import com.wxauto.reply.engine.mentionsAnyNickname
+import com.wxauto.reply.engine.normalizeChatName
 import java.util.concurrent.Executors
 
 /**
@@ -80,7 +82,7 @@ class WeChatAccessibilityService : AccessibilityService() {
                 text = text,
                 senderName = chatName,
                 isGroup = isGroup,
-                mentionedMe = text.contains("@"),
+                mentionedMe = isGroup && mentionsAnyNickname(text, config.selfNicknames),
             ),
         )
 
@@ -160,6 +162,14 @@ class WeChatAccessibilityService : AccessibilityService() {
             return
         }
 
+        // 异步决策和延迟结束后，用户可能已经切到另一段对话；先复核标题，
+        // 不匹配就失败关闭，绝不能把回复发给当前屏幕上的另一个联系人。
+        val currentTitle = readChatTitle(root)
+        if (currentTitle == null || normalizeChatName(currentTitle) != normalizeChatName(chatName)) {
+            Storage.recordEvent(this, "「$chatName」没发出去：当前微信会话已经变了")
+            return
+        }
+
         val input = findEditable(root)
         if (input == null) {
             Storage.recordEvent(this, "「$chatName」没发出去：找不到输入框（可能已经不在聊天页）")
@@ -187,8 +197,9 @@ class WeChatAccessibilityService : AccessibilityService() {
         }
 
         if (sendButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-            Storage.recordEvent(this, "已回复「$chatName」：$text")
-            Log.i(TAG, "已发送：$text")
+            // 无障碍 click 只有“已请求点击”的含义，微信未提供对方收件回执。
+            Storage.recordEvent(this, "已请求通过无障碍回复「$chatName」")
+            Log.i(TAG, "已请求通过无障碍回复「$chatName」")
         } else {
             Storage.recordEvent(this, "「$chatName」文字已填好，但发送按钮点不动")
         }

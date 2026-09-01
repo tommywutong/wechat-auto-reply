@@ -11,6 +11,7 @@ import android.util.Log
 import com.wxauto.reply.engine.EngineHolder
 import com.wxauto.reply.engine.Message
 import com.wxauto.reply.engine.Storage
+import com.wxauto.reply.engine.mentionsAnyNickname
 import java.util.concurrent.Executors
 
 /**
@@ -139,7 +140,7 @@ class WeChatNotificationService : NotificationListenerService() {
                 text = text,
                 senderName = senderName,
                 isGroup = isGroup,
-                mentionedMe = text.contains("@"),
+                mentionedMe = isGroup && mentionsAnyNickname(text, config.selfNicknames),
             ),
         )
 
@@ -171,8 +172,9 @@ class WeChatNotificationService : NotificationListenerService() {
         }
 
         if (sendReply(action, decision.text)) {
-            Storage.recordEvent(this, "已回复「$chatName」：${decision.text}")
-            Log.i(TAG, "已回复「$chatName」：${decision.text}")
+            // PendingIntent.send() 只能确认系统接收了请求，不能证明微信或对方已收到。
+            Storage.recordEvent(this, "已请求通过通知回复「$chatName」")
+            Log.i(TAG, "已请求通过通知回复「$chatName」")
         } else {
             // 等了几十秒才发，期间对方那条通知可能已经被用户点掉了，
             // 回复入口随之失效。这条路径不算少见，不能记成「已回复」。

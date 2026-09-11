@@ -24,6 +24,7 @@ bash scripts/run-macos-app.sh
 [![编译安卓 APK](https://github.com/tommywutong/wechat-auto-reply/actions/workflows/build-apk.yml/badge.svg)](https://github.com/tommywutong/wechat-auto-reply/actions/workflows/build-apk.yml)
 ![平台](https://img.shields.io/badge/平台-Android%20%7C%20macOS%20%7C%20iOS-lightgrey)
 ![测试](https://img.shields.io/badge/测试-194%20passed-brightgreen)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 基于大语言模型的微信自动回复系统。通过一套可配置的人设与应对策略生成回复，
 而非关键词匹配，因此能够处理未预设的对话内容。
@@ -33,6 +34,15 @@ Mac 服务的局域网遥控器，不直接读取或操作微信。
 
 > **面向非技术用户的图文步骤：[新手指南.md](新手指南.md)**
 > 本文档面向需要了解实现细节或修改代码的读者。
+
+## 效果预览
+
+把 macOS 控制面板或回复效果的录屏导出为 `docs/assets/demo.gif`（建议 ≤ 5MB、宽约 1200px），  
+提交后下面这行会自动展示动图；文件未放入仓库前请保持注释状态。
+
+<!-- ![demo](docs/assets/demo.gif) -->
+
+若需要静态截图，可放 `docs/assets/overview.png` 并在本节引用。
 
 ## 致谢与本地依赖
 
@@ -61,6 +71,7 @@ TraceMemo 应用。首次使用仍需在 TraceMemo 中完成一次微信数据�
 - [开发与测试](#开发与测试)
 - [已知限制](#已知限制)
 - [免责声明](#免责声明)
+- [许可证](#许可证)
 
 ---
 
@@ -476,3 +487,8 @@ APK 由 GitHub Actions 构建，单元测试失败时不产出制品。
 建议初期仅对少量熟识联系人启用，观察若干日后再扩大范围。
 
 本项目仅供学习与个人使用。使用者应对由此产生的一切后果负责。
+
+## 许可证
+
+本仓库源码采用 [MIT License](LICENSE)。第三方依赖与提示词风格参考见
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
